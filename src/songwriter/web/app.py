@@ -18,6 +18,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from contextlib import asynccontextmanager
 import duckdb
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,16 +34,22 @@ from songwriter.db import corpus_db
 from songwriter.lexicon.query import RhymeDB, RhymeType
 from songwriter.service import Workbench
 
-from songwriter.web.musicstudio_v1 import router as musicstudio_v1_router
-from songwriter.config import AUTH_ENABLED, AUTH_PASSWORD, AUTH_USER, CORPUS_DB, CORS_ORIGINS, DATA_DIR, WORKBENCH_DB
+from songwriter.web.musicstudio_v1 import router as musicstudio_v1_router, init_db
+from songwriter.config import AUTH_ENABLED, AUTH_PASSWORD, AUTH_USER, CORPUS_DB, CORS_ORIGINS, DATA_DIR, SONGS_PARQUET, WORKBENCH_DB
 from songwriter.web.auth import BasicAuthMiddleware
 DB_PATH = CORPUS_DB
 RHYME_DB_PATH = CORPUS_DB
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
 
 app = FastAPI(
     title="Songwriter Studio & Cowriter API",
     description="Deterministic phonetic analysis, 4M+ unified rhyme database, 3.18M song corpus explorer, and AI music cowriter.",
     version="1.2.0",
+    lifespan=lifespan,
 )
 
 # Same-origin by default: the bundled UI needs no CORS. Cross-origin callers
@@ -59,6 +66,7 @@ if CORS_ORIGINS:
 if AUTH_ENABLED:
     app.add_middleware(BasicAuthMiddleware, username=AUTH_USER, password=AUTH_PASSWORD)
 app.include_router(musicstudio_v1_router)
+
 
 wb = Workbench(DB_PATH)
 cowriter = SongwriterCowriter()
@@ -1215,7 +1223,7 @@ def healthz() -> JSONResponse:
     Exempt from auth so load balancers and the install script can probe it;
     it reveals only whether the data files exist.
     """
-    ready = {"corpus_db": CORPUS_DB.exists(), "workbench_db": WORKBENCH_DB.exists()}
+    ready = {"corpus_db": CORPUS_DB.exists(), "songs_parquet": SONGS_PARQUET.exists(), "workbench_db": WORKBENCH_DB.exists()}
     ok = all(ready.values())
     return JSONResponse({"status": "ok" if ok else "missing_data", **ready}, status_code=200 if ok else 503)
 # ---------------------------------------------------------------- Web UI
