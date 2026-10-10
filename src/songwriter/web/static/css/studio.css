@@ -1,0 +1,101 @@
+/* Song Analytics + Saved Songs: scansion canvas, lyrics sheet, library table. */
+
+.lyrics-sheet {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 20px;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-size: 0.92rem;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  color: var(--text-main);
+  min-height: 480px;
+  flex: 1;
+  overflow-y: auto;
+}
+.sheet-section-header {
+  font-weight: 700;
+  margin-top: 16px;
+  margin-bottom: 4px;
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+.sec-default { background: var(--bg-surface); color: var(--cyan); }
+.sec-singer-a { background: var(--singer-a-bg); color: var(--singer-a); border: 1px solid rgba(122, 162, 247, 0.3); }
+.sec-singer-b { background: var(--singer-b-bg); color: var(--singer-b); border: 1px solid rgba(187, 154, 247, 0.3); }
+.sec-harmony { background: var(--harmony-bg); color: var(--harmony); border: 1px solid rgba(224, 175, 104, 0.3); }
+.studio-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: stretch;
+}
+@media (max-width: 900px) {
+  .studio-grid { grid-template-columns: 1fr; }
+}
+.library-table,
+.lyrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.library-table { font-size: 0.82rem; }
+.lyrics-table  { font-size: 0.85rem; }
+.library-table thead tr,
+.lyrics-table thead tr {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  position: sticky;
+  top: 0;
+}
+.library-table thead tr { z-index: 2; }
+.lyrics-table thead tr  { z-index: 5; }
+.library-table th,
+.lyrics-table th { padding: 10px 12px; font-weight: 600; }
+.th-sort { cursor: pointer; }
+.library-table th:nth-child(1) { width: 34px; text-align: center; }
+.library-table th:last-child   { width: 80px; text-align: right; }
+.lyrics-table th:nth-child(1) { width: 45px; text-align: center; }
+.lyrics-table th:nth-child(2) { width: 110px; }
+.lyrics-table th:nth-child(4) { width: 65px; text-align: center; }
+.lyrics-table th:nth-child(5) { width: 130px; font-family: var(--font-mono); font-size: 0.75rem; }
+.lyrics-table th:nth-child(6) { width: 140px; text-align: right; }
+.lyrics-table th:nth-child(7) { width: 50px; text-align: center; }
+.badge-cliche { font-size: 0.72rem; color: var(--rose); background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.25); border-radius: 4px; padding: 1px 6px; }
+.badge-optimal { background: var(--cyan); color: #000; font-weight: 800; font-size: 0.75rem; }
+.badge-suboptimal { background: var(--amber); color: #000; font-weight: 800; font-size: 0.75rem; }
+.matrix-grid { display: inline-block; border: 1px solid var(--border-subtle); border-radius: 6px; overflow: hidden; }
+.matrix-cell { width: 14px; height: 14px; border: 0.5px solid rgba(0, 0, 0, 0.25); cursor: pointer; }
+.matrix-c0 { background: rgba(26,27,38,0.8); }
+.matrix-c1 { background: #1f2335; }
+.matrix-c2 { background: #394b70; }
+.matrix-c3 { background: #2ac3de; }
+.matrix-c4 { background: #7aa2f7; }
+.rhyme-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; border-radius: 4px; cursor: pointer; background: rgba(255, 255, 255, 0.02); font-size: 0.8rem; color: #fff; transition: background 0.15s ease; }
+.rhyme-item:hover { background: var(--bg-surface-hover); }
+.intellisense-word { cursor: pointer; border-radius: 3px; padding: 1px 2px; transition: background 0.15s ease; }
+.intellisense-word:hover { background: var(--bg-surface-hover); color: var(--cyan); }
+.canvas-row { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.canvas-cell-num { text-align: center; padding: 10px 10px; color: var(--text-dim); font-size: 0.75rem; vertical-align: top; }
+.canvas-cell-sec { padding: 8px 10px; vertical-align: top; }
+.canvas-sec-input { padding: 4px 8px; font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; font-weight: 700; width: 95px; }
+.canvas-cell-line { padding: 8px 10px; vertical-align: top; }
+.canvas-line-input { width: 100%; padding: 6px 10px; font-size: 0.88rem; font-weight: 500; color: #fff; }
+.canvas-palette { font-size: 0.78rem; color: var(--text-dim); padding: 2px 4px; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.canvas-palette-label { font-size: 0.68rem; text-transform: uppercase; color: var(--cyan); margin-right: 4px; }
+.canvas-cell-syl { text-align: center; padding: 10px 10px; vertical-align: top; }
+.canvas-cell-stress { padding: 10px 10px; font-family: monospace; font-size: 0.74rem; color: var(--text-dim); letter-spacing: 0.08em; vertical-align: top; }
+.canvas-cell-rhyme { padding: 8px 10px; text-align: right; vertical-align: top; }
+.canvas-cell-action { text-align: center; padding: 10px 10px; vertical-align: top; }
+.rhyme-btn { font-size: 0.75rem; padding: 4px 8px; color: var(--indigo); border-color: rgba(122, 162, 247, 0.3); font-weight: 700; }
+.library-row { border-bottom: 1px solid rgba(255, 255, 255, 0.04); cursor: pointer; }
+.library-row:hover { background: var(--bg-surface-hover); }
+.library-row.active { background: rgba(122, 162, 247, 0.08); }
+.library-table td { padding: 10px 12px; }
+.library-table td:first-child { text-align: center; }
+.library-table td:last-child { text-align: right; }
+.lyrics-table td { vertical-align: top; }

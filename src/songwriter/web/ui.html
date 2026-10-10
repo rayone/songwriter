@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Songwriter</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/base.css">
+<link rel="stylesheet" href="/static/css/components.css">
+<link rel="stylesheet" href="/static/css/cowriter.css">
+<link rel="stylesheet" href="/static/css/studio.css">
+<link rel="stylesheet" href="/static/css/utilities.css">
+</head>
+<body>
+<header>
+  <div class="brand">SONGWRITER</div>
+  <nav>
+    <button class="active" data-tab="ghostwriter" onclick="switchTab('ghostwriter')">Cowriter</button>
+    <button data-tab="crafted" onclick="switchTab('crafted')">Saved Songs</button>
+    <button data-tab="studio" onclick="switchTab('studio')">Song Analytics</button>
+    <button data-tab="rhymes" onclick="switchTab('rhymes')">Rhyme Finder</button>
+    <button data-tab="songs" onclick="switchTab('songs')">Corpus Explorer</button>
+    <button data-tab="settings" onclick="switchTab('settings')">Settings</button>
+  </nav>
+  <a class="api-link" href="/docs" target="_blank">API Docs</a>
+</header>
+
+<main>
+
+<!-- ------------------------------------------------ COWRITER (SEQUENTIAL 4-STEP WIZARD) -->
+<div id="tab-ghostwriter" class="tab-content active">
+  <div class="wizard-deck">
+
+    <!-- Sequential Step Navigation Tabs Bar -->
+    <div class="wizard-stepper">
+      <button type="button" class="step-tab active" id="tab-step-1" onclick="goToStep(1)">
+        <div class="step-num" id="num-step-1">1</div>
+        <div class="step-info">
+          <div class="step-title">1. Idea &amp; Storyline</div>
+          <div class="step-desc">Title, Brief &amp; 3-Act Arc</div>
+        </div>
+      </button>
+      <button type="button" class="step-tab" id="tab-step-2" onclick="goToStep(2)">
+        <div class="step-num" id="num-step-2">2</div>
+        <div class="step-info">
+          <div class="step-title">2. Reference &amp; Specs</div>
+          <div class="step-desc">Groove, Lyrics &amp; Production</div>
+        </div>
+      </button>
+      <button type="button" class="step-tab" id="tab-step-3" onclick="goToStep(3)">
+        <div class="step-num" id="num-step-3">3</div>
+        <div class="step-info">
+          <div class="step-title">3. Producer Questions</div>
+          <div class="step-desc">Craft Refinements &amp; Choices</div>
+        </div>
+      </button>
+      <button type="button" class="step-tab" id="tab-step-4" onclick="goToStep(4)">
+        <div class="step-num" id="num-step-4">4</div>
+        <div class="step-info">
+          <div class="step-title">4. Lyrics &amp; Takes</div>
+          <div class="step-desc">Drafting, Scansion &amp; Audio</div>
+        </div>
+      </button>
+    </div>
+
+    <!-- =========================================================================
+         STEP 1: Song Idea & Narrative Storyline
+         ========================================================================= -->
+    <div class="step-pane active" id="step-pane-1">
+      <div class="step-header">
+        <div>
+          <div class="step-headline">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            Step 1: Song Idea &amp; Narrative Storyline
+          </div>
+          <div class="step-subline">
+            Establish your song concept, title, and scene. The AI authors a 3-act narrative treatment (Technological Haiku) to ground your song in physical reality.
+          </div>
+        </div>
+      </div>
+
+      <!-- Model Selection Banner at the Top of Step 1 -->
+      <div class="field-group panel mb-16">
+        <div class="flex justify-between items-center">
+          <label class="panel-title c-cyan gap-8" for="gw-model">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 14a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm1-5a1 1 0 0 1-2 0V7a1 1 0 0 1 2 0z"/></svg>
+            Select AI Generation Model
+          </label>
+          <span class="badge badge-info c-bright" id="gw-model-status">User Selection Required</span>
+        </div>
+        <select id="gw-model" class="field-select" onchange="onModelSelected(this.value)">
+          <option value="" disabled selected>Loading available models from server...</option>
+        </select>
+        <div class="field-hint">Choose which model generates your narrative storyline, producer interview, and real-time lyric scansion.</div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="gw-title">Song Title</label>
+        <input type="text" id="gw-title" placeholder="e.g. Midnight Drive" value="">
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="gw-prompt">Song Brief: Story, Scene or Subject</label>
+        <textarea id="gw-prompt" rows="4" placeholder="Describe your song idea, story, character, or scene (e.g. driving through the city late at night after seeing an ex with someone else)..."></textarea>
+      </div>
+
+      <div class="field-group" id="gw-template-section-group">
+        <div class="flex justify-between items-center">
+          <label class="field-label" for="gw-style-input">Style &amp; Mood Direction</label>
+          <span class="badge badge-info" id="gw-template-count-badge">Loading sound profiles…</span>
+        </div>
+        <!-- THE SINGLE OMNIBOX COMPONENT -->
+        <div class="search-selection-container relative" id="gw-search-selection-container">
+          <div class="relative flex items-center">
+            <svg class="omnibox-icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="text" id="gw-style-input"
+                   class="input-icon-left input-icon-right"
+                   placeholder="Search production sound profiles by genre, mood, instrument or BPM (e.g. Dark Trap, Indie Folk, 120 BPM)..."
+                   autocomplete="off"
+                   onfocus="openTemplateDropdown()"
+                   onclick="openTemplateDropdown()"
+                   oninput="onOmniboxInput(this.value)"
+                   onkeydown="onTemplateSearchKeyDown(event)">
+            <div class="omnibox-actions">
+              <button type="button" id="gw-template-clear-btn" class="btn-icon hidden" onclick="clearActiveTemplate()" title="Clear">✕</button>
+              <button type="button" id="gw-template-toggle-btn" class="btn-icon" onclick="toggleTemplateDropdown()" title="Browse templates">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+            </div>
+          </div>
+          <!-- Dropdown Menu / Results List -->
+          <div id="gw-template-dropdown-menu" class="search-selection-menu popover dropdown-menu mh-380 scroll-y hidden">
+            <!-- Genre filter: every genre in the template table, largest first -->
+            <div class="dropdown-filterbar">
+              <label for="gw-genre-filter" class="fs-2xs fw-600 c-muted mr-4">Genre</label>
+              <select id="gw-genre-filter" class="field-select genre-filter" onchange="filterTemplateGenre(this.value)">
+                <option value="">All genres</option>
+              </select>
+            </div>
+            <div id="gw-template-dropdown-status" class="dropdown-status">Loading sound profiles…</div>
+            <div id="gw-template-dropdown-list" class="dropdown-list">
+              <div class="empty-state">Loading templates...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Selected Template Detail Card (Rich preview of template text, BPM, genre, key, vocal) -->
+        <div id="gw-selected-template-card" class="panel panel-accent hidden mt-10">
+          <div class="flex justify-between items-start mb-8 flex-wrap gap-8">
+            <div>
+              <div class="eyebrow c-cyan mb-2">Selected Production Template</div>
+              <div id="gw-card-tmpl-title" class="fs-xl fw-700 c-bright">Template Title</div>
+            </div>
+            <div class="flex gap-6">
+              <button type="button" class="btn-secondary btn-sm" onclick="openTemplateDropdown()">Browse Other Templates</button>
+              <button type="button" class="btn-secondary btn-sm c-red" onclick="clearActiveTemplate()">Clear</button>
+            </div>
+          </div>
+          <div class="ref-badges mb-10" id="gw-card-tmpl-badges">
+            <!-- Badges: Genre, Subgenre, BPM, Key, Vocal -->
+          </div>
+          <div class="fs-xs fw-600 c-muted mb-4">Template Audio Prompt &amp; Instrumentation:</div>
+          <div id="gw-card-tmpl-text" class="pkg-box c-bright mb-6"></div>
+          <div id="gw-card-tmpl-protip" class="tip-box hidden fs-xs c-yellow mt-6"></div>
+        </div>
+
+        <input type="hidden" id="gw-selected-template-id" value="">
+      </div>
+
+      <div class="flex items-center gap-12">
+        <button type="button" class="btn-primary" id="btn-gen-storyline" onclick="generateStoryline()">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Generate Story
+        </button>
+        <span id="gw-story-status" class="status-line">Ready to create.</span>
+      </div>
+
+      <!-- Storyline Output Card -->
+      <div id="gw-storyline-container" class="panel hidden flex-col gap-10">
+        <div class="flex justify-between items-center">
+          <div class="panel-title c-cyan">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            3-Act Narrative Storyline
+          </div>
+          <span class="badge badge-info c-emerald">Act I: Atmosphere · Act II: Conflict · Act III: Stakes</span>
+        </div>
+        <textarea id="gw-storyline-text" rows="5" class="pkg-box min-h-120 ff-inherit fs-md" placeholder="Your storyline treatment will appear here..."></textarea>
+        <div class="field-hint">You can edit this narrative treatment directly before proceeding to the reference track.</div>
+      </div>
+
+      <div class="step-footer">
+        <div class="fs-sm c-dim">Step 1 of 4: Conceptualize</div>
+        <button type="button" class="btn-primary" id="btn-next-step-1" onclick="advanceToStep(2)">
+          Next: Choose Reference Track &amp; Specs ➔
+        </button>
+      </div>
+    </div>
+
+    <!-- =========================================================================
+         STEP 2: Reference Song & Production Specifications
+         ========================================================================= -->
+    <div class="step-pane" id="step-pane-2">
+      <div class="step-header">
+        <div>
+          <div class="step-headline">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            Step 2: Reference Track &amp; Production Specifications
+          </div>
+          <div class="step-subline">
+            Select or search a reference song from 3.18M tracks to inherit its groove, scansion, and duet roles. All specs are editable below in this single tab.
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION: Search & Discover Reference Songs (Search 1st, Recommendations below) -->
+      <div class="panel">
+        <div class="fs-lg fw-700 c-main mb-4" id="gw-search-header">
+          Find Reference Track
+        </div>
+        <div class="field-hint mb-10">Search 3.18M corpus songs by artist or title. Typing automatically filters results:</div>
+        <div class="flex gap-8 mb-10">
+          <input type="text" id="gw-ref-search-input" placeholder="Type artist or title (e.g. Olivia Rodrigo, The Weeknd, Dua Lipa, Queen, Taylor Swift)..." oninput="onRefSearchInput(this.value)" onkeydown="if(event.key==='Enter') searchReferenceSongs()">
+          <button type="button" class="btn-primary w-auto" onclick="searchReferenceSongs()">Search</button>
+          <button type="button" class="btn-secondary w-auto" onclick="clearRefSearch()">Clear</button>
+        </div>
+        <label class="flex items-center gap-4 fs-sm c-muted mb-8" title="Only show songs with an imported MIDI, so a YuE2 ABC score is available">
+          <input type="checkbox" id="gw-ref-has-midi" onchange="onRefMidiToggle()">
+          Has MIDI score only
+        </label>
+        <div id="gw-ref-search-status" class="status-line mb-8"></div>
+
+        <!-- Live Search Results Grid (shown when searching) -->
+        <div id="gw-search-results-grid" class="ref-grid mh-360 scroll-y hidden"></div>
+
+        <!-- Curated Recommendations Section (shown when NOT searching) -->
+        <div id="gw-recommendations-section" class="mt-12">
+          <div class="flex justify-between items-center mb-6">
+            <div class="fs-sm fw-700 c-cyan">Recommended Reference Tracks (Matched to your Brief &amp; Style)</div>
+            <span class="badge badge-info fs-2xs">Smart Metadata Match</span>
+          </div>
+          <div class="field-hint mb-10">Top reference blueprints matching your tempo, groove, and narrative arc:</div>
+          <div id="gw-recommendations-grid" class="ref-grid">
+            <div class="empty-state">Loading smart recommendations...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 2A: Active Reference Song Banner -->
+      <!-- FULL REFERENCE TRACK INSPECTOR (CORPUS EXPLORER EQUIVALENT) -->
+      <div id="gw-reference-inspector" class="card card-elevated hidden mt-16">
+        <!-- Inspector Header -->
+        <div class="flex justify-between items-start flex-wrap gap-12 mb-14">
+          <div>
+            <div class="eyebrow c-cyan mb-4">
+              Active Reference Track (Full Corpus Explorer View)
+            </div>
+            <div id="insp-ref-title" class="fs-4xl fw-800 c-bright">Song Title</div>
+            <div id="insp-ref-meta" class="fs-sm c-muted mt-2">Artist • Album • Year • Duration</div>
+            <div class="ref-badges mt-8" id="insp-ref-badges">
+              <!-- Badges: Genre, BPM, Key, Time Sig, Melodic Contour, Vocal Range, Verified -->
+            </div>
+          </div>
+          <div class="flex gap-8 items-center">
+            <button type="button" class="btn-secondary" onclick="clearSelectedReference()">
+              ✕ Change Track
+            </button>
+          </div>
+        </div>
+
+        <!-- Inspector Sub-Navigation Tabs -->
+        <div class="inspector-nav">
+          <button type="button" class="tab-btn active" id="btn-insp-tab-overview" onclick="switchInspectorTab('overview')">
+            Overview &amp; Audio Specs
+          </button>
+          <button type="button" class="tab-btn" id="btn-insp-tab-abc" onclick="switchInspectorTab('abc')">
+            ABC Music Score &amp; Melody
+          </button>
+          <button type="button" class="tab-btn" id="btn-insp-tab-scansion" onclick="switchInspectorTab('scansion')">
+            Lyrics &amp; Section Scansion
+          </button>
+        </div>
+
+        <!-- Pane 1: Overview & Audio Specifications -->
+        <div id="insp-pane-overview" class="inspector-pane active">
+          <!-- Musical Specs Grid -->
+          <div class="param-grid grid-auto-140 mb-14">
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Tempo (BPM)</span><b id="spec-bpm" class="c-yellow fs-lg">-</b></div>
+              <div class="audio-meter-bar"><div id="spec-bpm-bar" class="audio-meter-fill w-half"></div></div>
+            </div>
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Key &amp; Scale</span><b id="spec-key" class="c-magenta fs-lg">-</b></div>
+              <div class="fs-xs c-muted mt-2" id="spec-timesig">4/4 meter</div>
+            </div>
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Melodic Contour</span><b id="spec-contour" class="c-cyan fs-lg">-</b></div>
+              <div class="fs-xs c-muted mt-2" id="spec-vocal-range">-</div>
+            </div>
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Structure Plan</span><b id="spec-plan" class="c-bright fs-lg">-</b></div>
+              <div class="fs-xs c-muted mt-2" id="spec-sections-count">-</div>
+            </div>
+          </div>
+
+          <!-- Audio Features Visualization -->
+          <div class="fs-sm fw-700 c-bright mb-8 flex items-center gap-6">
+            Audio Analysis Features (Million Song Dataset &amp; Acoustic Profile)
+          </div>
+          <div class="grid grid-auto-180 gap-10 mb-14">
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Danceability</span><b id="meter-dance">-</b></div>
+              <div class="audio-meter-bar"><div id="bar-dance" class="audio-meter-fill"></div></div>
+            </div>
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Energy</span><b id="meter-energy">-</b></div>
+              <div class="audio-meter-bar"><div id="bar-energy" class="audio-meter-fill"></div></div>
+            </div>
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Valence (Positivity)</span><b id="meter-valence">-</b></div>
+              <div class="audio-meter-bar"><div id="bar-valence" class="audio-meter-fill"></div></div>
+            </div>
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Acousticness</span><b id="meter-acoustic">-</b></div>
+              <div class="audio-meter-bar"><div id="bar-acoustic" class="audio-meter-fill"></div></div>
+            </div>
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Loudness (dB)</span><b id="meter-loudness">-</b></div>
+              <div class="audio-meter-bar"><div id="bar-loudness" class="audio-meter-fill"></div></div>
+            </div>
+            <div class="audio-meter">
+              <div class="audio-meter-label"><span>Speechiness</span><b id="meter-speech">-</b></div>
+              <div class="audio-meter-bar"><div id="bar-speech" class="audio-meter-fill"></div></div>
+            </div>
+          </div>
+
+          <!-- Harmony, Chords & Sensory Mood -->
+          <div class="grid grid-2 gap-14 mb-8">
+            <div class="subpanel">
+              <div class="fs-xs fw-700 c-yellow mb-6">Chords Progression &amp; Roman Numerals</div>
+              <div id="insp-chords-list" class="ref-badges mb-6">
+                <span class="badge badge-info">No chord data</span>
+              </div>
+              <div id="insp-roman-numerals" class="fs-xs c-muted mono"></div>
+            </div>
+            <div class="subpanel">
+              <div class="fs-xs fw-700 c-cyan mb-6">Sensory Concreteness &amp; Mood Architecture</div>
+              <div id="insp-sensory-info" class="fs-sm c-muted lh-14">
+                Analyzing sensory modality and VAD space...
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pane 2: ABC Music Score & Melody -->
+        <div id="insp-pane-abc" class="inspector-pane">
+          <div class="flex justify-between items-center mb-8">
+            <div class="fs-sm fw-700 c-cyan">ABC Music Score (from imported MIDI, when available)</div>
+            <button type="button" class="btn-secondary btn-sm" onclick="copyBox('insp-ref-abc-box', this)">Copy ABC Score</button>
+          </div>
+          <div class="field-hint mb-8">Only songs with an imported MIDI sequence carry a score. Compatible with ABCjs, LilyPond and YuE2:</div>
+          <textarea id="insp-ref-abc-box" class="pkg-box min-h-280 fs-sm" readonly></textarea>
+        </div>
+
+        <!-- Pane 3: Lyrics & Scansion Breakdown -->
+        <div id="insp-pane-scansion" class="inspector-pane">
+          <div class="flex justify-between items-center mb-8">
+            <div class="fs-sm fw-700 c-cyan">Section-by-Section Lyric Scansion &amp; Syllable Contours</div>
+            <button type="button" class="btn-secondary btn-sm" onclick="copyBox('insp-ref-lyrics-box', this)">Copy Raw Lyrics</button>
+          </div>
+          <div id="insp-scansion-table-host" class="mh-360 scroll-y mb-12">
+            <!-- Scansion tables rendered dynamically -->
+          </div>
+          <textarea id="insp-ref-lyrics-box" class="hidden"></textarea>
+        </div>
+      </div>
+      <!-- Retain parameter state inputs (synced between reference song, template, and Step 3) -->
+      <input type="hidden" id="gw-bpm" value="118">
+      <input type="hidden" id="gw-key" value="C">
+      <input type="hidden" id="gw-scale" value="major">
+      <input type="hidden" id="gw-syllables" value="8-10">
+      <input type="hidden" id="gw-vocal" value="melodic lead">
+      <input type="hidden" id="gw-singer-a" value="Singer A (Male Vocal)">
+      <input type="hidden" id="gw-singer-b" value="Singer B (Female Vocal)">
+      <input type="hidden" id="gw-scheme" value="AABB">
+      <input type="hidden" id="gw-plan" value="standard">
+      <input type="hidden" id="gw-banned" value="night/light, fire/desire, heart/apart">
+      <input type="hidden" id="gw-selected-template-id" value="">
+      <div class="step-footer flex-wrap justify-between items-center gap-10">
+        <button type="button" class="btn-secondary" onclick="goToStep(1)">⬅ Back to Step 1</button>
+        <div class="flex gap-8 items-center">
+          <button type="button" class="btn-secondary" id="btn-skip-reference-song" onclick="skipReferenceSong()">
+            Skip Reference Track (Use Template Specs) ➔
+          </button>
+          <button type="button" class="btn-primary" id="btn-next-step-2" onclick="advanceToStep(3)">
+            Next: Producer Questions ➔
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =========================================================================
+         STEP 3: Producer Questions & Creative Refinements
+         ========================================================================= -->
+    <div class="step-pane" id="step-pane-3">
+      <div class="step-header">
+        <div>
+          <div class="step-headline">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            Step 3: Producer Questions &amp; Creative Refinements
+          </div>
+          <div class="step-subline">
+            The AI co-writer generates brief-specific craft questions with recommended defaults selected. Customize any choice or proceed to generate.
+          </div>
+        </div>
+      </div>
+
+      <div id="gw-interview-status" class="status-line">Analyzing brief...</div>
+      <div id="gw-questions" class="interview-feed">
+        <div class="empty-state">Loading craft questions...</div>
+      </div>
+
+      <div class="step-footer">
+        <button type="button" class="btn-secondary" onclick="goToStep(2)">⬅ Back to Step 2</button>
+        <button type="button" class="btn-primary" id="btn-next-step-3" onclick="advanceToStep(4); runGenerateTake(false);">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Generate Production Lyrics ➔
+        </button>
+      </div>
+    </div>
+
+    <!-- =========================================================================
+         STEP 4: Lyrics Generation & Studio Takes
+         ========================================================================= -->
+    <div class="step-pane" id="step-pane-4">
+      <div class="step-header">
+        <div>
+          <div class="step-headline">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            Step 4: Studio Lyrics &amp; Version Takes
+          </div>
+          <div class="step-subline">
+            Section-by-section drafting with deterministic scansion, external/internal toggling, and audio engine packaging.
+          </div>
+        </div>
+      </div>
+
+      <!-- Takes & Actions Toolbar -->
+      <div class="takes-bar">
+        <div class="take-tab-list">
+          <span class="fs-xs fw-700 uppercase c-dim mr-4">Takes:</span>
+          <div id="ws-take-switcher" class="flex gap-6 flex-wrap">
+            <button type="button" class="pill active" id="btn-take-1" onclick="selectTake(1)">Take 1</button>
+          </div>
+          <button type="button" class="take-add-btn" onclick="runGenerateTake(true)">+ New Take</button>
+        </div>
+        <div class="flex items-center gap-8">
+          <button type="button" class="btn-secondary" onclick="toggleAudioDrawer()">Audio Packages</button>
+        </div>
+      </div>
+      <!-- Generation Status Banner -->
+      <div id="gw-status" class="status-line fs-sm py-4">Ready to craft.</div>
+
+      <!-- Audio Packages Drawer (Collapsible) -->
+      <div id="ws-view-audio" class="packages-grid hidden mb-14 grid-auto-280">
+        <div class="card">
+          <div class="pkg-head">
+            <div class="pkg-title">Suno / Udio / SongBench Audio Prompt</div>
+            <button class="btn-secondary" onclick="copyBox('pkg-songbench-box', this)">Copy Prompt</button>
+          </div>
+          <textarea id="pkg-songbench-box" class="pkg-box min-h-220" readonly></textarea>
+        </div>
+        <div class="card">
+          <div class="pkg-head">
+            <div class="pkg-title">YuE2 Package (Title Case Tags + Style)</div>
+            <button class="btn-secondary" onclick="copyBox('pkg-yue2-box', this)">Copy for YuE2</button>
+          </div>
+          <textarea id="pkg-yue2-box" class="pkg-box min-h-220" readonly></textarea>
+        </div>
+        <div class="card">
+          <div class="pkg-head">
+            <div class="pkg-title">MiniMax Music 03 Package (Caption Spec)</div>
+            <button class="btn-secondary" onclick="copyBox('pkg-minimax-box', this)">Copy for MiniMax</button>
+          </div>
+          <textarea id="pkg-minimax-box" class="pkg-box min-h-220" readonly></textarea>
+        </div>
+      </div>
+
+      <!-- Interactive Co-Writing Live Chat & Lyrics Sheet Split View -->
+      <div class="grid grid-split-35 gap-20 items-start">
+
+        <!-- Left Column: Interactive Chat / Turns Window (LLM & Scansion Engine Dialogue) -->
+        <div class="panel flex-col gap-10">
+          <div class="flex justify-between items-center flex-wrap gap-8">
+            <div class="panel-title c-cyan">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              Live Turn-by-Turn Chat &amp; Validation Stream
+            </div>
+            <div class="flex gap-6 items-center">
+              <span id="gw-chat-turn-indicator" class="badge badge-info c-indigo">Turn 0</span>
+              <button type="button" class="btn-secondary btn-sm d-none" id="btn-copy-chat-transcript" onclick="copyChatTranscript(this)">
+                Copy Transcript
+              </button>
+              <button type="button" class="btn-secondary btn-sm" id="btn-start-interactive-cowrite" onclick="runInteractiveDrafting(false)">
+                ↺ Re-Draft
+              </button>
+            </div>
+          </div>
+          <div class="field-hint">Real-time conversational turns: Inspect prompts sent to LLM, raw responses, deterministic validation errors, and injected RhymeDB candidates:</div>
+
+          <!-- Chat Turns Container -->
+          <div id="gw-chat-turns-window" class="chat-turns-window">
+            <div class="empty-state" id="gw-chat-empty-state">
+              Click <b>"Run Interactive Co-Writer"</b> to begin drafting line-by-line with live prompt inspection, 5x retry validation loops, and RhymeDB injection!
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Live Assembled Lyrics Sheet & Scansion Stats -->
+        <div class="flex flex-col gap-10">
+          <div class="flex justify-between items-center flex-wrap gap-8">
+            <div id="lyrics-meta-pills" class="metric-row mb-0"></div>
+            <button type="button" class="btn-secondary btn-sm" onclick="copyCurrentLyrics(this)">Copy Lyrics</button>
+          </div>
+          <div id="lyrics-sheet-content" class="lyrics-sheet min-h-520">
+            Your verified lyrics will assemble here in real time as each line passes scansion checks.
+          </div>
+          <div class="panel-sm">
+            <div class="fs-sm fw-700 c-cyan mb-6">Deterministic Scansion Checks Summary</div>
+            <div id="craft-pills" class="metric-row mb-0"></div>
+          </div>
+        </div>
+      </div>
+      <!-- Version Iteration Notice -->
+      <div class="note-indigo fs-sm c-muted flex items-center gap-10">
+        <svg width="20" height="20" fill="none" stroke="var(--indigo)" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <div>
+          <b>Create New Versions:</b> You can click back to <b>Step 1</b> (Idea &amp; Story), <b>Step 2</b> (Specs &amp; Reference Track), or <b>Step 3</b> (Questions) at any time to adjust parameters. When you return here, click <b>"+ New Take"</b> to generate an alternate take and compare!
+        </div>
+      </div>
+
+      <div class="step-footer flex-wrap gap-10">
+        <div class="flex gap-8">
+          <button type="button" class="btn-secondary" onclick="goToStep(3)">⬅ Back to Step 3</button>
+          <button type="button" class="btn-secondary btn-danger-outline" onclick="discardAndStartOver()">Discard &amp; Start Over</button>
+        </div>
+        <div class="flex gap-8">
+          <button type="button" class="btn-secondary" onclick="saveCurrentTake()">✓ Save Song to Library</button>
+          <button type="button" class="btn-primary" onclick="loadTakeIntoStudio()">Open in Lyrics Editor ➔</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ------------------------------------------------ CRAFTED SONGS (LIBRARY & RECOVERY) -->
+<div id="tab-crafted" class="tab-content">
+  <div class="card mb-16">
+    <div class="flex justify-between items-center flex-wrap gap-12">
+      <div>
+        <div class="fs-2xl fw-700 c-bright flex items-center gap-8">
+          <svg width="22" height="22" fill="none" stroke="var(--cyan)" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          Saved Song Library
+          <span id="crafted-count-pill" class="badge badge-secondary fs-xs">0 Songs</span>
+        </div>
+        <div class="fs-sm c-muted mt-2">Manage, sort, inspect, batch-delete, and export crafted song takes and ABC scores.</div>
+      </div>
+      <div class="flex gap-8 items-center flex-wrap">
+        <input type="text" id="crafted-search-input" placeholder="Search title, artist, brief..." oninput="onCraftedSearchInput(this.value)" class="w-220 input-sm">
+        <select id="crafted-status-filter" onchange="loadCraftedSongsList()" class="w-130 input-sm">
+          <option value="">All Statuses</option>
+          <option value="draft">Drafts</option>
+          <option value="finalized">Finalized</option>
+          <option value="rendered">Rendered</option>
+        </select>
+        <select id="crafted-sort-by" onchange="loadCraftedSongsList()" class="w-140 input-sm">
+          <option value="updated_at:desc">Newest First</option>
+          <option value="updated_at:asc">Oldest First</option>
+          <option value="title:asc">Title (A-Z)</option>
+          <option value="title:desc">Title (Z-A)</option>
+          <option value="bpm:desc">BPM (High-Low)</option>
+          <option value="bpm:asc">BPM (Low-High)</option>
+        </select>
+        <button type="button" class="btn-secondary btn-sm" onclick="loadCraftedSongsList()">↻ Refresh</button>
+        <button type="button" class="btn-secondary btn-sm btn-danger-outline hidden" id="btn-batch-delete" onclick="batchDeleteSelectedSongs()">
+          Delete Selected (<span id="batch-selected-count">0</span>)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabular Songs Explorer Layout -->
+  <div class="grid grid-split-45 gap-20 items-start">
+    <!-- Table Container -->
+    <div class="card p-0 overflow-hidden">
+      <div class="mh-78vh scroll-y">
+        <table class="library-table">
+          <thead>
+            <tr>
+              <th>
+                <input type="checkbox" id="crafted-select-all" onchange="toggleSelectAllCrafted(this.checked)" class="cursor-pointer">
+              </th>
+              <th class="th-sort" onclick="changeCraftedSort('title')">Song Title ↕</th>
+              <th class="th-sort" onclick="changeCraftedSort('genre')">Genre ↕</th>
+              <th class="th-sort" onclick="changeCraftedSort('bpm')">BPM / Key ↕</th>
+              <th class="th-sort" onclick="changeCraftedSort('status')">Status ↕</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="crafted-table-body">
+            <tr>
+              <td colspan="6" class="td-empty">Loading crafted song database...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Right: Active Song Details & Recovery Inspector -->
+    <div class="card flex-col gap-14 min-h-500 mh-78vh scroll-y" id="crafted-inspector-card">
+      <div class="empty-state" id="crafted-inspector-empty">Select a song from the table to preview lyrics, ABC notation, and audio engine prompts.</div>
+      <div id="crafted-inspector-content" class="hidden flex-col gap-12">
+        <div class="flex justify-between items-start flex-wrap gap-10">
+          <div>
+            <div class="fs-2xl fw-700 c-bright" id="insp-title">Title</div>
+            <div class="fs-xs c-muted mt-2" id="insp-meta">Artist • Genre • BPM</div>
+          </div>
+          <div class="flex gap-6 items-center flex-wrap">
+            <button type="button" class="btn-primary btn-sm" onclick="loadCraftedSongIntoCowriter()">Load into Cowriter</button>
+            <button type="button" class="btn-secondary btn-sm" onclick="loadCraftedSongIntoEditor()">Open in Editor</button>
+            <button type="button" class="btn-secondary btn-sm btn-danger-outline" onclick="deleteActiveCraftedSong()">Delete</button>
+          </div>
+        </div>
+
+        <div class="ref-badges" id="insp-badges"></div>
+
+        <div class="flex gap-8 items-center flex-wrap">
+          <label class="fs-xs c-muted" for="insp-revision">Revision</label>
+          <select id="insp-revision" class="field-input w-auto" onchange="selectCraftedRevision(this.value)"></select>
+          <span class="fs-xs c-dim" id="insp-revision-note"></span>
+        </div>
+
+        <!-- Tabs for Inspector: Lyrics / ABC Score / Audio Prompts -->
+        <div class="tabs-row mt-4">
+          <button type="button" class="btn-secondary btn-sm active" id="btn-insp-lyrics" onclick="showInspTab('lyrics')">Lyrics</button>
+          <button type="button" class="btn-secondary btn-sm" id="btn-insp-abc" onclick="showInspTab('abc')">YuE2 ABC Score</button>
+          <button type="button" class="btn-secondary btn-sm" id="btn-insp-prompts" onclick="showInspTab('prompts')">Audio Prompts</button>
+        </div>
+
+        <!-- Lyrics View -->
+        <div id="insp-view-lyrics">
+          <div class="lyrics-sheet mh-360 scroll-y fs-md" id="insp-lyrics-sheet"></div>
+        </div>
+
+        <!-- ABC Score View -->
+        <div id="insp-view-abc" class="hidden flex-col gap-8">
+          <div class="flex justify-between items-center">
+            <span class="fs-xs c-muted">Conditional musical score for YuE2 inference:</span>
+            <button type="button" class="btn-secondary btn-sm" onclick="copyBox('insp-abc-text', this)">Copy ABC</button>
+          </div>
+          <textarea id="insp-abc-text" class="pkg-box min-h-260 mono fs-sm" readonly></textarea>
+        </div>
+
+        <!-- Prompts View -->
+        <div id="insp-view-prompts" class="hidden flex-col gap-10">
+          <div>
+            <div class="fs-xs fw-700 c-cyan mb-4">Suno / Udio / SongBench Formula:</div>
+            <textarea id="insp-prompt-songbench" class="pkg-box min-h-60 fs-sm" readonly></textarea>
+          </div>
+          <div>
+            <div class="fs-xs fw-700 c-cyan mb-4">MiniMax Music 03 Caption:</div>
+            <textarea id="insp-prompt-minimax" class="pkg-box min-h-90 fs-sm" readonly></textarea>
+          </div>
+          <div>
+            <div class="fs-xs fw-700 c-cyan mb-4">YuE2 Style Tags:</div>
+            <textarea id="insp-prompt-yue2" class="pkg-box min-h-60 fs-sm" readonly></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ------------------------------------------------ LYRICS EDITOR -->
+<div id="tab-studio" class="tab-content">
+  <!-- Top Bar: Overview & Overall Song Analytics -->
+  <div class="card mb-16">
+    <div class="flex justify-between items-center flex-wrap gap-12 mb-12">
+      <div>
+        <div class="fs-2xl fw-700 c-bright flex items-center gap-8">
+          <svg width="22" height="22" fill="none" stroke="var(--cyan)" stroke-width="2" viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+          Song Analytics &amp; Unified Lyrics Studio
+        </div>
+        <div id="studio-song-title" class="fs-md fw-600 c-cyan mt-4 hidden"></div>
+        <div class="fs-sm c-muted mt-2">
+          Edit lines in-place with real-time evaluation. Click any end word or keyword to open the smart RhymeDB substitution palette.
+        </div>
+      </div>
+      <div class="flex gap-8 items-center">
+        <button type="button" class="btn-primary btn-sm" onclick="togglePasteLyricsBox()">Paste / Import Lyrics</button>
+        <button type="button" class="btn-secondary btn-sm" onclick="addNewLyricLine()">+ Add Line</button>
+        <button type="button" class="btn-secondary btn-sm" onclick="copyUnifiedLyrics(this)">Copy Lyrics</button>
+        <button type="button" class="btn-secondary btn-sm" onclick="switchTab('ghostwriter')">Back to Cowriter</button>
+        <span id="analysis-status" class="status-line">Ready</span>
+      </div>
+    </div>
+
+    <!-- 4 Pillars Entire Song Analytics Summary -->
+    <div class="grid grid-auto-160 gap-10">
+      <div class="stat-tile">
+        <div class="stat-tile-label">1. Cadence &amp; Pulse</div>
+        <div class="stat-tile-value c-cyan" id="m-cadence-var">0.00</div>
+        <div class="stat-tile-sub" id="m-cadence-label">Pulse Variance: -</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-tile-label">2. Vocabulary Diversity</div>
+        <div class="stat-tile-value c-emerald" id="m-ttr-val">0.0%</div>
+        <div class="stat-tile-sub" id="m-ttr-label">TTR Ratio: -</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-tile-label">3. Rhyme Architecture</div>
+        <div class="stat-tile-value c-indigo" id="m-density">0%</div>
+        <div class="stat-tile-sub" id="m-scheme">Scheme: -</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-tile-label">4. Syllable Benchmark</div>
+        <div class="stat-tile-value c-bright" id="m-avg-syl">0.0</div>
+        <div class="stat-tile-sub" id="m-lines-label">0 lines</div>
+      </div>
+    </div>
+
+    <!-- Harmonic & Sensory Architecture Cards -->
+    <div class="grid grid-2 gap-12 mt-10">
+      <!-- Chords Progression & Roman Numerals -->
+      <div class="panel-sm">
+        <div class="flex justify-between items-center mb-6">
+          <div class="eyebrow c-yellow">Chords Progression &amp; Roman Numerals</div>
+          <span id="studio-harmony-prog-name" class="fs-2xs c-dim mono"></span>
+        </div>
+        <div id="studio-chords-list" class="ref-badges mb-6 flex-wrap gap-6">
+          <span class="badge badge-info">Awaiting lyrics or chords...</span>
+        </div>
+        <div id="studio-roman-numerals" class="fs-xs c-cyan mono fw-600"></div>
+      </div>
+
+      <!-- Sensory Concreteness & Mood Architecture -->
+      <div class="panel-sm">
+        <div class="eyebrow c-cyan mb-6">Sensory Concreteness &amp; Mood Architecture</div>
+        <div id="studio-sensory-info" class="fs-sm c-muted lh-14">
+          Evaluating sensory modality and emotion space...
+        </div>
+      </div>
+    </div>
+
+    <!-- Global Song-Level Diagnostic (Thematic Guidance Only) -->
+    <div id="global-guidance-container" class="mt-10"></div>
+  </div>
+
+  <!-- Collapsible Paste / Import Lyrics Drawer -->
+  <div id="paste-lyrics-drawer" class="drawer hidden mb-14">
+    <div class="flex justify-between items-center mb-6">
+      <div class="fs-md fw-700 c-cyan">Paste or Write Raw Song Lyrics:</div>
+      <div class="flex gap-6">
+        <button type="button" class="btn-primary btn-sm" onclick="loadPastedLyricsIntoTable()">Initialize Canvas Table ➔</button>
+        <button type="button" class="btn-secondary btn-sm" onclick="togglePasteLyricsBox(false)">Cancel</button>
+      </div>
+    </div>
+    <textarea id="studio-text" class="lyrics-area min-h-160 fs-md" placeholder="Paste raw lyrics here (with optional [Section] tags like [Verse 1], [Chorus])..."></textarea>
+    <div class="field-hint mt-4">Section tags and lyric lines will be automatically parsed into the interactive scansion table.</div>
+  </div>
+
+  <!-- Unified Editable Lyrics & Scansion Canvas Table -->
+  <div class="card p-0 overflow-hidden relative">
+    <div class="mh-72vh scroll-y">
+      <table id="unified-lyrics-table" class="lyrics-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Section</th>
+            <th>Editable Lyric Line (Type to Re-Evaluate Real-Time)</th>
+            <th>Syllables</th>
+            <th>Stress Grid</th>
+            <th>End Word / Rhyme</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="unified-lyrics-tbody">
+          <tr>
+            <td colspan="7" class="td-empty-lg">
+              <div class="fs-lg fw-600 c-bright mb-6">No song lyrics loaded yet</div>
+              <div class="fs-sm c-muted mb-14">Paste raw lyrics, open from your Saved Songs library, or write line-by-line.</div>
+              <div class="flex justify-center gap-8">
+                <button type="button" class="btn-primary fs-sm" onclick="togglePasteLyricsBox(true)">📋 Paste Lyrics to Initialize</button>
+                <button type="button" class="btn-secondary fs-sm" onclick="addNewLyricLine()">+ Write Line 1</button>
+                <button type="button" class="btn-secondary fs-sm" onclick="switchTab('crafted')">Open from Saved Songs</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Self-Similarity Matrix Modal / Section below Table -->
+  <div class="card mt-16 p-10">
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <div class="fs-md fw-700 c-bright">Structural Self-Similarity Matrix</div>
+        <div class="fs-xs c-muted">Visualizes repeating refrains, hooks (dense clusters), and narrative verse shifts.</div>
+      </div>
+      <span class="fs-2xs c-cyan mono" id="matrix-size-label">0 x 0</span>
+    </div>
+    <div id="similarity-matrix-container" class="scroll-x py-6">
+      <div class="empty-state">Matrix generates automatically when lyrics are analyzed.</div>
+    </div>
+  </div>
+
+  <!-- Floating Smart RhymeDB Substitution Dropdown -->
+  <div id="rhyme-smart-dropdown" class="popover-fixed hidden p-10 w-260 mh-320 scroll-y">
+    <div class="flex justify-between items-center mb-6 divider-bottom">
+      <span class="fs-xs fw-700 c-cyan" id="rhyme-dropdown-word">Rhymes for '...'</span>
+      <button type="button" class="btn-icon fs-lg" onclick="closeRhymeDropdown()">✕</button>
+    </div>
+    <div id="rhyme-dropdown-items" class="flex flex-col gap-4">
+      <div class="empty-state p-10">Loading rhymes...</div>
+    </div>
+  </div>
+</div>
+<!-- ------------------------------------------------ FORMATTER -->
+<div id="tab-formatter" class="tab-content">
+  <div class="studio-grid">
+    <div class="card">
+      <div class="card-header"><span>Raw Lyrics</span></div>
+      <textarea id="fmt-input" class="lyrics-area" placeholder="Paste any lyrics or draft to package for YuE2 &amp; MiniMax"></textarea>
+      <div class="field-group mt-12">
+        <label class="field-label" for="fmt-template">Production Template</label>
+        <select id="fmt-template"><option value="">Match from style</option></select>
+      </div>
+      <div class="mt-12">
+        <button class="btn-primary" onclick="runAudioFormat()">Package for Engines</button>
+        <span id="fmt-status" class="status-line"></span>
+      </div>
+    </div>
+    <div class="card" id="fmt-output-card">
+      <div class="card-header"><span>Engine Packages</span></div>
+      <div id="fmt-results" class="flex-1 scroll-y"><div class="empty-state">Nothing packaged yet.</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ RHYMES -->
+<div id="tab-rhymes" class="tab-content">
+  <div class="card">
+    <div class="card-header"><span>Rhyme Finder</span><span id="rhyme-db-stats" class="fs-xs c-dim"></span></div>
+    <div class="flex gap-12 flex-wrap items-end">
+      <div class="field-group flex-1 min-w-200">
+        <label class="field-label" for="rhyme-query">Target Word or Phrase</label>
+        <input type="text" id="rhyme-query" placeholder="e.g. sunflower, shawty, ivory tower" onkeydown="if(event.key==='Enter') searchRhymes()">
+      </div>
+      <div class="field-group w-190">
+        <label class="field-label" for="rhyme-kind">Rhyme Type</label>
+        <select id="rhyme-kind" onchange="searchRhymes()">
+          <option value="perfect">perfect</option>
+          <option value="perfect_masculine">perfect · masculine (1 syl)</option>
+          <option value="perfect_feminine">perfect · feminine (2 syl)</option>
+          <option value="perfect_dactylic">perfect · dactylic (3+ syl)</option>
+          <option value="rich">rich (homophone)</option>
+          <option value="assonance">assonance (vowels)</option>
+          <option value="consonance">consonance (consonants)</option>
+          <option value="family">family (related coda)</option>
+          <option value="pararhyme">pararhyme (flesh/flash)</option>
+          <option value="reverse">reverse (late/lake)</option>
+          <option value="alliteration">alliteration</option>
+          <option value="eye">eye (cough/rough)</option>
+          <option value="mosaic">mosaic (phrase)</option>
+          <option value="additive">additive (coal/cold)</option>
+          <option value="subtractive">subtractive (cold/coal)</option>
+          <option value="editorial">editorial (human-asserted)</option>
+        </select>
+      </div>
+      <div class="field-group w-120">
+        <label class="field-label" for="rhyme-syl">Syllables</label>
+        <select id="rhyme-syl">
+          <option value="">any</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+        </select>
+      </div>
+      <div class="field-group w-150">
+        <label class="field-label" for="rhyme-prefer">Rank By</label>
+        <select id="rhyme-prefer">
+          <option value="singable">singable (line-end)</option>
+          <option value="fresh">fresh (rare)</option>
+          <option value="close">close (phonetic)</option>
+        </select>
+      </div>
+      <button class="btn-primary w-auto h-38" onclick="searchRhymes()">Search</button>
+    </div>
+    <div class="flex gap-18 flex-wrap mt-12 fs-sm c-dim">
+      <label><input type="checkbox" id="rhyme-phrases" checked> phrases</label>
+      <label><input type="checkbox" id="rhyme-verified"> verified pronunciations only</label>
+      <label>min freq <input type="number" id="rhyme-minfreq" value="0" min="0" step="100" class="w-80 input-xs"></label>
+    </div>
+    <!-- One control for every register label. Nothing is excluded by default;
+         the dictionary shows what is sung and the writer chooses. -->
+    <div class="flex gap-14 flex-wrap mt-10 fs-sm c-dim items-center">
+      <span>exclude:</span>
+      <label><input type="checkbox" class="rhyme-tag-exclude" value="slang"> slang</label>
+      <label><input type="checkbox" class="rhyme-tag-exclude" value="informal"> informal</label>
+      <label><input type="checkbox" class="rhyme-tag-exclude" value="vulgar"> vulgar</label>
+      <label><input type="checkbox" class="rhyme-tag-exclude" value="offensive"> offensive</label>
+      <label><input type="checkbox" class="rhyme-tag-exclude" value="archaic"> archaic</label>
+      <label><input type="checkbox" class="rhyme-tag-exclude" value="dialect"> dialect</label>
+      <label><input type="checkbox" class="rhyme-tag-exclude" value="poetic"> poetic</label>
+      <label><input type="checkbox" class="rhyme-tag-exclude" value="proper"> proper nouns</label>
+    </div>
+  </div>
+  <div id="rhyme-target" class="mt-16"></div>
+  <div id="rhyme-results" class="mt-16"></div>
+</div>
+
+<!-- ------------------------------------------------ CORPUS EXPLORER -->
+<div id="tab-songs" class="tab-content">
+  <div class="card">
+    <div class="card-header"><span>Corpus Explorer (3.18M Songs)</span></div>
+    <div class="flex gap-12 flex-wrap items-end">
+      <div class="field-group flex-1 min-w-220">
+        <label class="field-label" for="song-query">Query</label>
+        <input type="text" id="song-query" placeholder="title, artist, or lyric phrase" onkeydown="if(event.key==='Enter') searchSongs()">
+      </div>
+      <div class="field-group w-150">
+        <label class="field-label" for="song-by">Search Field</label>
+        <select id="song-by">
+          <option value="all">all</option>
+          <option value="title">title</option>
+          <option value="artist">artist</option>
+          <option value="lyrics">lyrics</option>
+        </select>
+      </div>
+      <button class="btn-primary w-auto h-38" onclick="searchSongs()">Search</button>
+    </div>
+  </div>
+  <div id="song-results" class="mt-16"></div>
+</div>
+
+<!-- ------------------------------------------------ SETTINGS -->
+<div id="tab-settings" class="tab-content">
+  <div class="card mb-16">
+    <div class="card-header"><span>LLM Backend</span><span id="settings-llm-status" class="badge badge-dim">—</span></div>
+    <div class="field-hint mb-12">Configure the model backend used for storyline, interview and lyric generation. Saved to the workbench database and applied immediately — no restart.</div>
+    <div class="field-group mb-12">
+      <label class="field-label" for="set-llm-endpoint">API Endpoint (OpenAI-compatible base URL)</label>
+      <input type="text" id="set-llm-endpoint" placeholder="http://host:port/v1">
+      <div class="field-hint" id="set-llm-endpoint-src"></div>
+    </div>
+    <div class="field-group mb-12">
+      <label class="field-label" for="set-llm-api-key">API Key</label>
+      <input type="password" id="set-llm-api-key" placeholder="Leave blank to keep current key">
+      <div class="field-hint" id="set-llm-api-key-src">Blank keeps the saved key. Type a new key to replace it, or "-" to clear.</div>
+    </div>
+    <div class="field-group mb-12">
+      <label class="field-label" for="set-default-model">Default Model (optional)</label>
+      <select id="set-default-model" class="field-select"><option value="">(use first available)</option></select>
+      <div class="field-hint" id="set-default-model-src"></div>
+    </div>
+    <div class="flex gap-8 items-center">
+      <button type="button" class="btn-secondary w-auto" onclick="testLlmConnection()">Test Connection</button>
+      <button type="button" class="btn-primary w-auto" onclick="saveSettings()">Save Settings</button>
+      <span id="settings-test-result" class="status-line"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span>Generation Defaults</span></div>
+    <div class="field-hint mb-12">Fallbacks used when a template or reference song does not specify them.</div>
+    <div class="flex gap-12 flex-wrap">
+      <div class="field-group w-150">
+        <label class="field-label" for="set-default-bpm">Default BPM</label>
+        <input type="number" id="set-default-bpm" min="40" max="300">
+      </div>
+      <div class="field-group w-150">
+        <label class="field-label" for="set-default-music-key">Default Key</label>
+        <input type="text" id="set-default-music-key" placeholder="C">
+      </div>
+      <div class="field-group w-150">
+        <label class="field-label" for="set-default-scale">Default Scale</label>
+        <select id="set-default-scale" class="field-select"><option value="major">major</option><option value="minor">minor</option></select>
+      </div>
+      <div class="field-group w-180">
+        <label class="field-label" for="set-default-vocal">Default Vocal</label>
+        <input type="text" id="set-default-vocal" placeholder="melodic lead">
+      </div>
+    </div>
+    <div class="flex gap-8 items-center mt-12">
+      <button type="button" class="btn-primary w-auto" onclick="saveSettings()">Save Settings</button>
+      <span id="settings-save-result" class="status-line"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span>Validation Rules</span><span id="validation-status" class="badge badge-dim">—</span></div>
+    <div class="field-hint mb-12">Deterministic checks run on every generated line. Tune how strict they are. Changes apply to the next generation — no restart.</div>
+    <div class="flex gap-12 flex-wrap items-end mb-10">
+      <div class="field-group w-220">
+        <label class="field-label" for="set-cliche-min-freq">Cliché frequency threshold</label>
+        <input type="number" id="set-cliche-min-freq" min="500" max="500000" step="500">
+        <div class="field-hint">A phrase is flagged a cliché only if it appears at least this many times in the corpus. Higher = fewer flags.</div>
+      </div>
+      <label class="field-group flex items-center gap-4 fs-sm c-muted">
+        <input type="checkbox" id="set-cliche-check-enabled"> Cliché check on
+      </label>
+      <label class="field-group flex items-center gap-4 fs-sm c-muted">
+        <input type="checkbox" id="set-melodic-delta-enabled"> Melodic-delta check on
+      </label>
+    </div>
+    <div class="field-group mb-10">
+      <label class="field-label" for="set-idiom-allowlist">Idiom allow-list (never flagged, one per line)</label>
+      <textarea id="set-idiom-allowlist" class="pkg-box min-h-120 mono fs-sm" placeholder="no one knows&#10;lord knows"></textarea>
+      <div class="field-hint">Familiar conversational idioms the cliché check should always permit, even above the threshold.</div>
+    </div>
+    <div class="flex gap-8 items-center">
+      <button type="button" class="btn-primary w-auto" onclick="saveSettings()">Save Settings</button>
+      <span id="validation-save-result" class="status-line"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span>LLM Prompts</span><span id="prompt-status" class="badge badge-dim">—</span></div>
+    <div class="field-hint mb-12">The exact text sent to the model for each step. Pick a prompt, edit it, and Save. <code>{placeholders}</code> are filled by the app at generation time (listed below each prompt). Save keeps a new version; switch versions anytime; Reset restores the original.</div>
+    <div class="flex gap-12 flex-wrap items-end mb-10">
+      <div class="field-group flex-1 min-w-260">
+        <label class="field-label" for="prompt-select">Prompt</label>
+        <select id="prompt-select" class="field-select" onchange="selectPrompt(this.value)"></select>
+      </div>
+      <div class="field-group w-180">
+        <label class="field-label" for="prompt-version-select">Version</label>
+        <select id="prompt-version-select" class="field-select" onchange="activatePromptVersion(this.value)"></select>
+      </div>
+    </div>
+    <div class="field-hint mb-8" id="prompt-desc"></div>
+    <div class="field-group mb-8">
+      <label class="field-label" for="prompt-text">Prompt text</label>
+      <textarea id="prompt-text" class="pkg-box min-h-300 mono fs-sm"></textarea>
+    </div>
+    <div class="field-group mb-10">
+      <label class="field-label">Placeholders (filled by the app)</label>
+      <div id="prompt-params" class="fs-xs c-muted mono"></div>
+    </div>
+    <div class="flex gap-8 items-center">
+      <button type="button" class="btn-primary w-auto" onclick="savePrompt()">Save</button>
+      <button type="button" class="btn-secondary w-auto" onclick="resetPrompt()">Reset to Default</button>
+      <span id="prompt-result" class="status-line"></span>
+    </div>
+  </div>
+</div>
+</main>
+
+<script defer src="/static/js/core.js"></script>
+<script defer src="/static/js/cowriter/wizard.js"></script>
+<script defer src="/static/js/cowriter/reference.js"></script>
+<script defer src="/static/js/cowriter/templates.js"></script>
+<script defer src="/static/js/cowriter/interview.js"></script>
+<script defer src="/static/js/cowriter/takes.js"></script>
+<script defer src="/static/js/library.js"></script>
+<script defer src="/static/js/studio.js"></script>
+<script defer src="/static/js/formatter.js"></script>
+<script defer src="/static/js/rhymes.js"></script>
+<script defer src="/static/js/corpus.js"></script>
+<script defer src="/static/js/settings.js"></script>
+<script defer src="/static/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,95 @@
+/* Design tokens: Tokyo Night palette, semantic colours, type scale. */
+
+:root {
+  /* --- Tokyo Night Primitives (JSON defs) --- */
+  --tn-bg: #1a1b26;
+  --tn-bg-dark: #16161e;
+  --tn-bg-dark1: #0c0e14;
+  --tn-bg-highlight: #292e42;
+  --tn-bg-visual: #283457;
+  --tn-black: #15161e;
+  --tn-border-highlight: #27a1b9;
+  --tn-comment: #565f89;
+  --tn-dark3: #545c7e;
+  --tn-dark5: #737aa2;
+  --tn-fg: #c0caf5;
+  --tn-fg-dark: #a9b1d6;
+  --tn-fg-gutter: #3b4261;
+  --tn-blue: #7aa2f7;
+  --tn-blue-bright: #8db0ff;
+  --tn-blue0: #3d59a1;
+  --tn-blue1: #2ac3de;
+  --tn-blue2: #0db9d7;
+  --tn-blue5: #89ddff;
+  --tn-cyan: #7dcfff;
+  --tn-green: #9ece6a;
+  --tn-green1: #73daca;
+  --tn-yellow: #e0af68;
+  --tn-orange: #ff9e64;
+  --tn-purple: #9d7cd8;
+  --tn-magenta: #bb9af7;
+  --tn-magenta2: #ff007c;
+  --tn-red: #f7768e;
+  --tn-red1: #db4b4b;
+  --tn-teal: #1abc9c;
+
+  /* --- Semantic Color Mappings --- */
+  --bg-canvas: var(--tn-bg);
+  --bg-panel: var(--tn-bg-dark);
+  --bg-surface: var(--tn-bg-highlight);
+  --bg-surface-hover: #333a54;
+  --bg-input: var(--tn-bg-dark);
+
+  --border-main: var(--tn-black);
+  --border-subtle: var(--tn-dark3);
+  --border-active: var(--tn-border-highlight);
+  --border-focus: rgba(39, 161, 185, 0.45);
+
+  --text-bright: #ffffff;
+  --text-main: var(--tn-fg);
+  --text-muted: var(--tn-fg-dark);
+  --text-dim: var(--tn-comment);
+
+  --primary: var(--tn-blue);
+  --primary-hover: var(--tn-blue-bright);
+  --primary-glow: rgba(122, 162, 247, 0.22);
+  --secondary: var(--tn-purple);
+  --accent: var(--tn-orange);
+  --success: var(--tn-green);
+  --warning: var(--tn-yellow);
+  --error: var(--tn-red1);
+  --info: var(--tn-blue2);
+  --cyan: var(--tn-cyan);
+  --teal: var(--tn-teal);
+  --magenta: var(--tn-magenta);
+
+  /* Functional Roles */
+  --singer-a: var(--primary);
+  --singer-a-bg: rgba(122, 162, 247, 0.14);
+  --singer-b: var(--magenta);
+  --singer-b-bg: rgba(187, 154, 247, 0.14);
+  --harmony: var(--warning);
+  --harmony-bg: rgba(224, 175, 104, 0.14);
+  --bg-highlight: var(--tn-bg-highlight);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --red: var(--tn-red);
+  --yellow: var(--tn-yellow);
+  --emerald: var(--tn-green);
+  --rose: var(--tn-red);
+  --amber: var(--tn-orange);
+  --indigo: var(--tn-purple);
+
+  /* Type scale */
+  --fs-2xs: 0.72rem;
+  --fs-xs: 0.78rem;
+  --fs-sm: 0.82rem;
+  --fs-md: 0.88rem;
+  --fs-lg: 0.95rem;
+  --fs-xl: 1.05rem;
+
+  /* Weights */
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+}

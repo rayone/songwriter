@@ -1,0 +1,1 @@
+"""MusicStudio database integration module."""
