@@ -3,20 +3,23 @@ set -euo pipefail
 
 resolve_data_dir() {
   if [ -n "${SONGWRITER_DATA_DIR:-}" ]; then
-    if mkdir -p "$SONGWRITER_DATA_DIR" 2>/dev/null; then
-      echo "$SONGWRITER_DATA_DIR"
-      return 0
+    if ! mkdir -p "$SONGWRITER_DATA_DIR" 2>/dev/null || [ ! -w "$SONGWRITER_DATA_DIR" ]; then
+      echo "ERROR: SONGWRITER_DATA_DIR='$SONGWRITER_DATA_DIR' is not writable." >&2
+      echo "If using a Render Persistent Disk: attach it with Mount Path '$SONGWRITER_DATA_DIR'." >&2
+      echo "For disposable free-tier testing: set SONGWRITER_DATA_DIR=/opt/render/project/src/data" >&2
+      exit 1
     fi
-    echo "WARNING: SONGWRITER_DATA_DIR='$SONGWRITER_DATA_DIR' is not writable (no persistent disk attached?)." >&2
+    echo "$SONGWRITER_DATA_DIR"
+    return 0
   fi
 
-  if mkdir -p "/var/data" 2>/dev/null; then
+  if [ -d "/var/data" ] && [ -w "/var/data" ]; then
     echo "/var/data"
     return 0
   fi
 
   echo "================================================================================" >&2
-  echo "NOTICE: Running in ephemeral storage mode (data/)." >&2
+  echo "NOTICE: Running with repo-local storage (data/)." >&2
   echo "Corpus data and user songs will reset on container restart or redeploy." >&2
   echo "For permanent storage on Render: attach a Persistent Disk mounted at /var/data." >&2
   echo "================================================================================" >&2
