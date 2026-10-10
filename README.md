@@ -56,6 +56,8 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 * **AI Cowriter Engine:** Interactive turn-by-turn lyric generator with section contour planning, interview setup wizards, and reference song blueprints.
 * **MusicStudio Integration (`/v1` API):** Production REST contract for DAW integration, supporting song revisions, metadata synchronization, and direct binary audio take uploads.
 * **Stdio MCP Server:** Plug-and-play Model Context Protocol tool provider compatible with Claude Desktop, Cursor, and any MCP client.
+* [**API for MusicStudio:** ](https://github.com/rayone/MusicStudio)
+
 
 <img width="729" height="852" alt="image" src="https://github.com/user-attachments/assets/665a7fef-959d-4442-b026-6ba9d0defc4e" />
 
