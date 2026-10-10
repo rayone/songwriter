@@ -1,15 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ -n "${SONGWRITER_DATA_DIR:-}" ]; then
-  DATA_DIR="$SONGWRITER_DATA_DIR"
-elif [ -d "/var/data" ] && [ -w "/var/data" ]; then
-  DATA_DIR="/var/data"
-else
-  DATA_DIR="data"
-fi
+resolve_data_dir() {
+  if [ -n "${SONGWRITER_DATA_DIR:-}" ]; then
+    if mkdir -p "$SONGWRITER_DATA_DIR" 2>/dev/null; then
+      echo "$SONGWRITER_DATA_DIR"
+      return 0
+    fi
+    echo "WARNING: SONGWRITER_DATA_DIR='$SONGWRITER_DATA_DIR' is not writable (no persistent disk attached?)." >&2
+  fi
+
+  if mkdir -p "/var/data" 2>/dev/null; then
+    echo "/var/data"
+    return 0
+  fi
+
+  echo "================================================================================" >&2
+  echo "NOTICE: Running in ephemeral storage mode (data/)." >&2
+  echo "Corpus data and user songs will reset on container restart or redeploy." >&2
+  echo "For permanent storage on Render: attach a Persistent Disk mounted at /var/data." >&2
+  echo "================================================================================" >&2
+  mkdir -p "data"
+  echo "data"
+}
+
+DATA_DIR="$(resolve_data_dir)"
 export SONGWRITER_DATA_DIR="$DATA_DIR"
-mkdir -p "$DATA_DIR"
+echo "Active storage directory: $DATA_DIR"
 
 APP_DB="$DATA_DIR/app.duckdb"
 SONGS_PQ="$DATA_DIR/songs.parquet"
