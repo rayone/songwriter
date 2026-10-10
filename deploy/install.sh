@@ -228,6 +228,7 @@ PYTHON="$SONGWRITER_HOME/.venv/bin/python"
 # ------------------------------------------------------------ runtime data
 APP_DB="$SONGWRITER_DATA_DIR/app.duckdb"
 SONGS_PQ="$SONGWRITER_DATA_DIR/songs.parquet"
+mkdir -p "$SONGWRITER_DATA_DIR"
 
 # Extract repo owner and name (e.g. rayone/songwriter)
 GH_REPO_SLUG=""

@@ -14,15 +14,15 @@ uv run python -m songwriter.mcp.server   # MCP stdio server
 
 ### Runtime Data
 
-The runtime requires two corpus data files flat in `<data_dir>/`:
-* `app.duckdb` (rhyme dictionary & linguistic statistics)
-* `songs.parquet` (reference song corpus)
-
-`workbench.duckdb` (user songs and revision history) is created automatically on first run.
+All runtime data lives flat in a single directory (`<data_dir>/`) with zero subdirectories:
+* `app.duckdb` (rhyme dictionary & linguistic statistics, required)
+* `songs.parquet` (reference song corpus, required)
+* `workbench.duckdb` (user songs and revision history, initialized automatically)
+* Uploaded and rendered audio files (`upload-*.bin`, `generation-*`) are stored flat in `<data_dir>/`
 
 ## Production Deployment
 
-Run the installer on a Debian/Ubuntu or Linux host:
+Run the installer on any Linux host with systemd:
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/rayone/songwriter/main/deploy/install.sh
