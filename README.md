@@ -26,10 +26,10 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 [ Facade ]                       service.Workbench (Unified API)
                                /              |               \
 [ Domain ]              Craft Diagnostics  Phonetics Engine  Corpus Search
-                         (Sensory/VAD)      (CMU / Stress)   (DuckDB / Parquet)
+                         (Sensory/VAD)      (CMU/Stress)   (DuckDB/Parquet)
                                \              |               /
 [ Storage ]                     +------ Flat Data Root -------+
-                                 (app.duckdb, songs.parquet, workbench.duckdb)
+                          (app.duckdb, songs.parquet, workbench.duckdb)
 ```
 
 ### The Analysis Pipeline
@@ -56,6 +56,16 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 * **AI Cowriter Engine:** Interactive turn-by-turn lyric generator with section contour planning, interview setup wizards, and reference song blueprints.
 * **MusicStudio Integration (`/v1` API):** Production REST contract for DAW integration, supporting song revisions, metadata synchronization, and direct binary audio take uploads.
 * **Stdio MCP Server:** Plug-and-play Model Context Protocol tool provider compatible with Claude Desktop, Cursor, and any MCP client.
+
+<img width="729" height="852" alt="image" src="https://github.com/user-attachments/assets/665a7fef-959d-4442-b026-6ba9d0defc4e" />
+
+<img width="724" height="755" alt="image" src="https://github.com/user-attachments/assets/dd88f034-ad8a-4fbd-affc-dfe24f572d5b" />
+
+<img width="731" height="779" alt="image" src="https://github.com/user-attachments/assets/303378c6-1822-46e0-9536-be68b1182a1f" />
+
+<img width="731" height="826" alt="image" src="https://github.com/user-attachments/assets/bef5757f-887f-46b6-868a-cb5034ab888b" />
+
+<img width="1040" height="836" alt="image" src="https://github.com/user-attachments/assets/ccb38f73-16f1-455c-beb4-9114d210e957" />
 
 ---
 
