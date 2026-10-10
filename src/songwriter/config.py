@@ -31,7 +31,7 @@ LLM_API_KEY = os.environ.get("SONGWRITER_LLM_API_KEY", "")
 
 # HTTP bind for the web server.
 HTTP_HOST = os.environ.get("SONGWRITER_HOST", "0.0.0.0")
-HTTP_PORT = int(os.environ.get("SONGWRITER_PORT", "8000"))
+HTTP_PORT = int(os.environ.get("SONGWRITER_PORT", os.environ.get("PORT", "8000")))
 
 # HTTP Basic auth for every route except /healthz. Both must be set to enable it.
 AUTH_USER = os.environ.get("SONGWRITER_AUTH_USER", "")
