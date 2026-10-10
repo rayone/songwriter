@@ -226,10 +226,8 @@ PYTHON="$SONGWRITER_HOME/.venv/bin/python"
 "$PYTHON" -c "import songwriter.config" || die "Dependency install did not produce a working environment."
 
 # ------------------------------------------------------------ runtime data
-CONS_DIR="$SONGWRITER_DATA_DIR/consolidated"
-APP_DB="$CONS_DIR/app.duckdb"
-SONGS_PQ="$CONS_DIR/songs.parquet"
-mkdir -p "$CONS_DIR"
+APP_DB="$SONGWRITER_DATA_DIR/app.duckdb"
+SONGS_PQ="$SONGWRITER_DATA_DIR/songs.parquet"
 
 # Extract repo owner and name (e.g. rayone/songwriter)
 GH_REPO_SLUG=""
@@ -323,8 +321,8 @@ if [ -n "$SONGWRITER_DB_URL" ]; then
 else
   # Pull automatically from GitHub release assets
   echo "Checking database release assets ($SONGWRITER_RELEASE_TAG)..."
-  fetch_and_extract_tar "$APP_DB" "app.duckdb.tar.gz" "$CONS_DIR" || echo "Note: app.duckdb could not be fetched automatically."
-  fetch_and_extract_tar "$SONGS_PQ" "songs.parquet.tar.gz" "$CONS_DIR" || echo "Note: songs.parquet could not be fetched automatically."
+  fetch_and_extract_tar "$APP_DB" "app.duckdb.tar.gz" "$SONGWRITER_DATA_DIR" || echo "Note: app.duckdb could not be fetched automatically."
+  fetch_and_extract_tar "$SONGS_PQ" "songs.parquet.tar.gz" "$SONGWRITER_DATA_DIR" || echo "Note: songs.parquet could not be fetched automatically."
 fi
 
 DATA_READY=1

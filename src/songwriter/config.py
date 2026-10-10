@@ -17,10 +17,9 @@ ROOT = Path(__file__).resolve().parents[2]
 # Data directory: env override wins, else repo-local ./data (dev default).
 DATA_DIR = Path(os.environ.get("SONGWRITER_DATA_DIR", ROOT / "data"))
 
-CORPUS_DB = DATA_DIR / "consolidated" / "app.duckdb"
+CORPUS_DB = DATA_DIR / "app.duckdb"
 WORKBENCH_DB = DATA_DIR / "workbench.duckdb"
-SONGS_PARQUET = DATA_DIR / "consolidated" / "songs.parquet"
-AUDIO_DIR = DATA_DIR / "audio"
+SONGS_PARQUET = DATA_DIR / "songs.parquet"
 
 # DuckDB resource caps (optional, empty = DuckDB defaults).
 DUCKDB_THREADS = os.environ.get("SONGWRITER_DUCKDB_THREADS", "")

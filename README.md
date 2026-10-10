@@ -14,7 +14,7 @@ uv run python -m songwriter.mcp.server   # MCP stdio server
 
 ### Runtime Data
 
-The runtime requires two corpus data files in `<data_dir>/consolidated/`:
+The runtime requires two corpus data files flat in `<data_dir>/`:
 * `app.duckdb` (rhyme dictionary & linguistic statistics)
 * `songs.parquet` (reference song corpus)
 
@@ -37,7 +37,7 @@ Configuration is environment-driven:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SONGWRITER_DATA_DIR` | `<repo>/data` | Runtime data directory (contains `consolidated/` and `audio/`). |
+| `SONGWRITER_DATA_DIR` | `<repo>/data` | Runtime data directory (holds `app.duckdb`, `songs.parquet`, `workbench.duckdb`). |
 | `SONGWRITER_LLM_ENDPOINT` | `http://127.0.0.1:11434/v1` | OpenAI-compatible LLM endpoint for the cowriter. |
 | `SONGWRITER_LLM_API_KEY` | *(empty)* | Optional API key for the LLM endpoint. |
 | `SONGWRITER_HOST` | `0.0.0.0` | HTTP bind host. |

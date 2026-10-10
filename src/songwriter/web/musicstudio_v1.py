@@ -41,14 +41,7 @@ from songwriter.music.engine_prompt import (
     render_yue2,
 )
 
-from songwriter.config import WORKBENCH_DB, CORPUS_DB, AUDIO_DIR
-DEFAULT_DB = WORKBENCH_DB
-UPLOADS_DIR = AUDIO_DIR / "uploads"
-GENERATIONS_DIR = AUDIO_DIR / "generations"
-def _ensure_audio_dirs() -> None:
-    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    GENERATIONS_DIR.mkdir(parents=True, exist_ok=True)
-
+from songwriter import config
 router = APIRouter(prefix="/v1", tags=["MusicStudio Integration"])
 
 
@@ -506,8 +499,7 @@ def health_check() -> dict[str, Any]:
         "contract_version": 1,
         "total_songs": cnt,
         "storage": {
-            "uploads_dir": str(UPLOADS_DIR),
-            "generations_dir": str(GENERATIONS_DIR),
+            "data_dir": str(config.DATA_DIR),
         },
     }
 
@@ -869,8 +861,8 @@ def request_upload(
         upload_id = f"upload_{uuid.uuid4().hex}"
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
         expires_iso = expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-        _ensure_audio_dirs()
-        file_path = str(UPLOADS_DIR / f"{upload_id}.bin")
+        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        file_path = str(config.DATA_DIR / f"upload-{upload_id}.bin")
 
         con.execute("""
             INSERT INTO upload_sessions (
@@ -1061,9 +1053,9 @@ def report_generation(
                 ).fetchone()
                 if upload_session and upload_session[0] == "uploaded":
                     ext = req.generation.output_format.lower().strip(".")
-                    _ensure_audio_dirs()
-                    file_key = f"{song_id}_{req.client.generation_uuid}.{ext}"
-                    perm_audio_path = GENERATIONS_DIR / file_key
+                    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                    file_key = f"generation-{song_id}_{req.client.generation_uuid}.{ext}"
+                    perm_audio_path = config.DATA_DIR / file_key
 
                     src_path = Path(upload_session[1])
                     if src_path.exists():
@@ -1347,7 +1339,7 @@ def update_evaluation(
 )
 def stream_audio(file_key: str) -> Any:
     clean_key = Path(file_key).name
-    target = GENERATIONS_DIR / clean_key
+    target = config.DATA_DIR / clean_key
     if not target.exists() or not target.is_file():
         return error_json(
             status_code=http_status.HTTP_404_NOT_FOUND,
