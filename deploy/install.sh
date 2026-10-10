@@ -326,12 +326,9 @@ else
   fetch_and_extract_tar "$SONGS_PQ" "songs.parquet.tar.gz" "$SONGWRITER_DATA_DIR" || echo "Note: songs.parquet could not be fetched automatically."
 fi
 
-DATA_READY=1
-[ -s "$APP_DB" ] && [ -s "$SONGS_PQ" ] || DATA_READY=0
-if [ "$DATA_READY" -eq 1 ]; then
-  echo "Initializing workbench database schema..."
-  SONGWRITER_DATA_DIR="$SONGWRITER_DATA_DIR" "$PYTHON" -c "from songwriter.ai.song_store import ensure_schema; ensure_schema()" || die "Could not initialize workbench database schema."
-fi
+[ -s "$APP_DB" ] && [ -s "$SONGS_PQ" ] || die "Runtime data files missing: $APP_DB and $SONGS_PQ are required. Set SONGWRITER_DB_URL or copy them into $SONGWRITER_DATA_DIR."
+echo "Initializing workbench database schema..."
+SONGWRITER_DATA_DIR="$SONGWRITER_DATA_DIR" "$PYTHON" -c "from songwriter.ai.song_store import ensure_schema; ensure_schema()" || die "Could not initialize workbench database schema."
 # ------------------------------------------------------------ service / launch
 wait_healthy() {
   local url="http://127.0.0.1:$SONGWRITER_PORT/healthz"
@@ -360,12 +357,10 @@ if [ "$INSTALL_SERVICE" -eq 1 ]; then
   systemctl daemon-reload
   systemctl enable songwriter >/dev/null
   systemctl restart songwriter
-  if [ "$DATA_READY" -eq 1 ]; then
-    if wait_healthy; then
-      echo "Service 'songwriter' is running on $SONGWRITER_HOST:$SONGWRITER_PORT."
-    else
-      die "Service started but /healthz did not answer. Check: journalctl -u songwriter -n 50"
-    fi
+  if wait_healthy; then
+    echo "Service 'songwriter' is running on $SONGWRITER_HOST:$SONGWRITER_PORT."
+  else
+    die "Service started but /healthz did not answer. Check: journalctl -u songwriter -n 50"
   fi
 else
   echo
@@ -373,15 +368,6 @@ else
   echo "  cd $SONGWRITER_HOME && set -a && . deploy/.env && set +a && .venv/bin/python -m songwriter.web"
 fi
 
-if [ "$DATA_READY" -eq 0 ]; then
-  echo
-  echo "Runtime databases are missing. Copy them into place, then (re)start the server:"
-  echo "  $APP_DB"
-  echo "  $WB_DB"
-  if [ "$INSTALL_SERVICE" -eq 1 ]; then
-    echo "  chown -R $SERVICE_USER:$SERVICE_USER $SONGWRITER_DATA_DIR && systemctl restart songwriter"
-  fi
-fi
 if [ -n "$SONGWRITER_AUTH_USER" ]; then
   echo
   echo "Login: user '$SONGWRITER_AUTH_USER'; password stored in $ENV_FILE (SONGWRITER_AUTH_PASSWORD)."
@@ -389,7 +375,7 @@ if [ -n "$SONGWRITER_AUTH_USER" ]; then
     echo "A password was generated for you; read it with: sudo grep AUTH_PASSWORD $ENV_FILE"
   fi
   if [ "$LOOPBACK" -eq 0 ]; then
-    echo "Basic auth sends the password on every request: put the server behind HTTPS (see deploy/README.md)."
+    echo "Basic auth sends the password on every request: put the server behind HTTPS."
   fi
 fi
 exit 0
