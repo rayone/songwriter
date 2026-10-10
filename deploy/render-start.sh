@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DATA_DIR="${SONGWRITER_DATA_DIR:-/var/data}"
+if [ -n "${SONGWRITER_DATA_DIR:-}" ]; then
+  DATA_DIR="$SONGWRITER_DATA_DIR"
+elif [ -d "/var/data" ] && [ -w "/var/data" ]; then
+  DATA_DIR="/var/data"
+else
+  DATA_DIR="data"
+fi
+export SONGWRITER_DATA_DIR="$DATA_DIR"
 mkdir -p "$DATA_DIR"
 
 APP_DB="$DATA_DIR/app.duckdb"
