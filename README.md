@@ -8,7 +8,7 @@ AI-augmented songwriting workbench: deterministic phonetic analysis, comprehensi
 
 Large Language Models cannot hear acoustic signals. Because they predict text as subword tokens rather than speech phonemes, they frequently hallucinate syllable counts, confuse poetic meter, and recommend weak or false rhymes.
 
-**Songwriter solves this deterministically.** It handles all auditory and metric evaluation using phonetic dictionaries, linguistic corpora, and stress analysis algorithms. Instead of asking a model to judge sound, Songwriter computes exact syllable counts, binary stress grids, 14 phonetic rhyme classifications, sensory imagery scores, and corpus cliché frequencies. 
+**Songwriter solves this deterministically.** It handles all auditory and metric evaluation using phonetic dictionaries, linguistic corpora, and stress analysis algorithms. Instead of asking a model to judge sound, Songwriter computes exact syllable counts, binary stress grids, 16 phonetic rhyme classifications, sensory imagery scores, and corpus cliché frequencies. 
 
 These verdicts are returned as compact, pre-ranked ratings so that human songwriters and small/cheap language models can compose lyrics with metrical accuracy.
 
@@ -35,7 +35,7 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 ### The Analysis Pipeline
 1. **Phonetic & Stress Decomposition:** Words are resolved against the CMU Pronouncing Dictionary to extract ARPAbet phoneme sequences. Each vowel phoneme carries an explicit stress level (`0` = unstressed, `1` = primary stress, `2` = secondary stress). For compound or derived out-of-vocabulary (OOV) terms, phonetic morphology rules and lexical lookups provide fallback pronunciations.
 2. **Meter & Rhythm Grids:** Lines are syllabified and aligned to musical bars (e.g. 4/4 meter with 4 beats), producing a visual binary stress grid (`•` for unstressed, `/` for stressed) that immediately identifies awkward cadences.
-3. **14-Class Rhyme Classification:** Rather than generic string suffix matching, rhymes are evaluated on vowel nuclei and coda consonant phoneme similarity:
+3. **16-Class Rhyme Classification:** Rather than generic string suffix matching, rhymes are evaluated on vowel nuclei and coda consonant phoneme similarity:
    * *Strict:* Perfect rhymes, family rhymes, additive/subtractive rhymes.
    * *Slant & Phonic:* Assonance, consonance, slant, rich rhymes, eye rhymes.
    * *Complex:* Multi-syllabic (mosaic) rhymes, rhyming slang substitutions.
@@ -49,7 +49,7 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 ## 3. Features
 
 * **Interactive Web Studio:** Full-featured browser UI for drafting songs, analyzing lyric takes, inspecting line-by-line metrics, and exploring reference blueprints.
-* **14 Distinct Rhyme Categories:** Filter and rank rhymes by syllable count, corpus frequency, phonetic strength, register tags (slang, poetic, vulgar), and emotional alignment.
+* **16 Distinct Rhyme Categories:** Filter and rank rhymes by syllable count, corpus frequency, phonetic strength, register tags (slang, poetic, vulgar), and emotional alignment.
 * **Cadence & Meter Diagnostics:** Real-time feedback on average syllable counts, variance, cadence consistency, and rhythm grid alignment.
 * **Cliché Detection:** Identifies overused phrasing windows and predictable rhyme pairs backed by real-world corpus statistics.
 * **Sensory & Emotional Mapping:** Visual breakdown of showing-vs-telling abstractions and emotional trajectories across verses, choruses, and bridges.
@@ -172,4 +172,4 @@ All runtime settings are configured via environment variables in `src/songwriter
 ## License
 
 Code is licensed under the [MIT License](LICENSE).
-Corpus lyrics and linguistic datasets are provided for private reference and study.
+The song corpus dataset carries a verified MIT license and is authorized for full unrestricted use.
