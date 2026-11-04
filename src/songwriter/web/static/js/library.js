@@ -280,6 +280,9 @@ async function loadCraftedSongIntoCowriter() {
   const takeId = state.nextTakeId++;
   state.takes[takeId] = {
     takeId: takeId,
+    status: 'completed',
+    statusText: 'Loaded from library: ' + (g.title || 'Untitled Song') + ' (revision ' + res.revision + ')',
+    statusColor: 'green',
     lyrics: lyrics,
     formatted_songbench: (ep.songbench ? ep.songbench + '\n\n' : '') + lyrics,
     formatted_yue2: (ep.yue2 ? ep.yue2 + '\n\n' : '') + lyrics + (g.abc_score ? '\n\n--- ABC SCORE ---\n' + g.abc_score : ''),

@@ -37,6 +37,10 @@ function goToStep(stepNum) {
     if (!questionsAreCurrent()) {
       loadInterviewQuestions();
     }
+  } else if (stepNum === 4) {
+    if (state.activeTakeId && typeof selectTake === 'function') {
+      selectTake(state.activeTakeId);
+    }
   }
 }
 function advanceToStep(stepNum) {

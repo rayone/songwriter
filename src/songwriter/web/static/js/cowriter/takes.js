@@ -3,11 +3,11 @@
 // Step 4 turn panels. Each turn shows three separate, colour-coded elements:
 // the prompt we sent (collapsed), the LLM's response, and the engine's analysis.
 // Manual validation adds its edit form below these.
-function turnCardId(turnId, attempt) {
-  return `turn-${turnId}-${attempt}`;
+function turnCardId(turnId, attempt, takeId) {
+  return `take-${takeId}-turn-${turnId}-${attempt}`;
 }
-function turnSlot(turnId, attempt, name) {
-  const card = el(turnCardId(turnId, attempt));
+function turnSlot(turnId, attempt, name, takeId) {
+  const card = el(turnCardId(turnId, attempt, takeId));
   return card ? card.querySelector(`[data-slot="${name}"]`) : null;
 }
 function promptPanelHtml(prompt) {
@@ -64,7 +64,8 @@ function critiquePanelHtml(critique) {
   `;
 }
 function copyChatTranscript(btn) {
-  const chatWindow = el('gw-chat-turns-window');
+  const take = state.takes[state.activeTakeId];
+  const chatWindow = take && take.chatPane;
   if (!chatWindow) return;
 
   const cards = chatWindow.querySelectorAll('.turn-card');
@@ -152,34 +153,27 @@ function analysisPanelInner(passed, scan, issues, critical_violations, advisorie
   return `<div class="turn-panel-title">Engine analysis <span class="turn-verdict">${verdict}</span></div>${rows}${issuesHtml}`;
 }
 
-async function runInteractiveDrafting(isNewTake = false) {
+async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
   const params = currentParams();
   if (!params.prompt) {
     setStatus('gw-status', 'Please enter a song brief in Step 1 first.', 'yellow');
     return;
   }
-  const mode = ((params.answers && params.answers.validation_mode && params.answers.validation_mode.answer) || '').toLowerCase();
+  const take = beginTake(isNewTake, resetTakeId);
+  const takeId = take.takeId;
+  params.song_id = take.songId || params.song_id;
+  const answer = params.answers && params.answers.validation_mode;
+  const mode = String((answer && answer.answer) || answer || '').toLowerCase();
   if (mode.indexOf('human') !== -1) {
-    return runHumanReview(isNewTake);
+    return runHumanReview(take, params);
   }
   params.story = val('gw-storyline-text') || state.storyline || '';
   params.max_sections = null;
   params.max_retries = 3;
-  const chatWindow = el('gw-chat-turns-window');
-  const turnIndicator = el('gw-chat-turn-indicator');
-  const lyricsContent = el('lyrics-sheet-content');
-  const btn = el('btn-start-interactive-cowrite');
-  // Re-Draft stays clickable: a click while streaming aborts and restarts from Turn 1.
-  if (state.draftAbort) { try { state.draftAbort.abort(); } catch (e) {} }
-  const abort = new AbortController();
-  state.draftAbort = abort;
-  if (btn) { btn.innerText = '↺ Re-Draft (restart)'; }
-  setStatus('gw-status', 'Streaming turns: prompt, response, and validation live...', 'yellow');
-
-  const copyBtn = el('btn-copy-chat-transcript');
-  if (copyBtn) copyBtn.classList.add('d-none');
-  if (chatWindow) chatWindow.innerHTML = '';
-  if (lyricsContent) lyricsContent.innerHTML = '';
+  const chatWindow = take.chatPane;
+  const lyricsContent = take.lyricsPane;
+  const abort = take.abort;
+  takeStatus(take, 'Streaming turns: prompt, response, and validation live...', 'yellow');
 
   try {
     const response = await fetch('/api/ai/draft_stream', {
@@ -208,6 +202,7 @@ async function runInteractiveDrafting(isNewTake = false) {
 
     while (true) {
       const { done, value } = await reader.read();
+      if (!isCurrentTakeRun(take)) return;
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const parts = buffer.split('\n\n');
@@ -230,10 +225,11 @@ async function runInteractiveDrafting(isNewTake = false) {
         // what the model returned, and the engine's analysis of that return.
         if (ev.type === 'prompt') {
           turnCount++;
-          if (turnIndicator) turnIndicator.innerText = `Turn ${turnCount}`;
+          take.turnText = `Turn ${turnCount}`;
+          if (state.activeTakeId === takeId) updateTakeControls(take);
           if (chatWindow) {
             const card = document.createElement('div');
-            card.id = turnCardId(ev.turn_id, ev.attempt);
+            card.id = turnCardId(ev.turn_id, ev.attempt, takeId);
             card.className = 'turn-card mb-10';
             card.innerHTML = `
               <div class="eyebrow c-dim">
@@ -255,13 +251,13 @@ async function runInteractiveDrafting(isNewTake = false) {
             chatWindow.scrollTop = chatWindow.scrollHeight;
           }
         } else if (ev.type === 'response') {
-          const slot = turnSlot(ev.turn_id, ev.attempt, 'response');
+          const slot = turnSlot(ev.turn_id, ev.attempt, 'response', takeId);
           if (slot) {
             slot.innerHTML = responsePanelInner(ev.response, ev.raw);
             chatWindow.scrollTop = chatWindow.scrollHeight;
           }
         } else if (ev.type === 'validation') {
-          const slot = turnSlot(ev.turn_id, ev.attempt, 'analysis');
+          const slot = turnSlot(ev.turn_id, ev.attempt, 'analysis', takeId);
           if (slot) {
             const v = ev.validation || {};
             slot.classList.toggle('pass', !!v.passed);
@@ -270,7 +266,7 @@ async function runInteractiveDrafting(isNewTake = false) {
             chatWindow.scrollTop = chatWindow.scrollHeight;
           }
         } else if (ev.type === 'critique') {
-          const slot = turnSlot(ev.turn_id, ev.attempt, 'critique');
+          const slot = turnSlot(ev.turn_id, ev.attempt, 'critique', takeId);
           if (slot && ev.critique) {
             slot.classList.remove('d-none');
             slot.classList.toggle('pass', ev.critique.passed !== false);
@@ -300,19 +296,21 @@ async function runInteractiveDrafting(isNewTake = false) {
       }
     }
 
-    if (completeData) {
-      setStatus('gw-status', 'Song complete! Verified against all scansion rules.', 'green');
-      renderTake(completeData, isNewTake);
-      const copyBtn = el('btn-copy-chat-transcript');
-      if (copyBtn) copyBtn.classList.remove('d-none');
-    }
+    if (!isCurrentTakeRun(take)) return;
+    if (!completeData) throw new Error('The stream ended before the song was complete. Please re-draft this take.');
+    renderTake(completeData, takeId);
+    takeStatus(take, 'Song complete! Verified against all scansion rules.', 'green');
   } catch (err) {
-    if (err && err.name === 'AbortError') return;  // Re-Draft restarted the stream
-    setStatus('gw-status', 'Interactive drafting error: ' + err.message, 'red');
+    if (!isCurrentTakeRun(take) || (err && err.name === 'AbortError')) return;
+    take.status = 'failed';
+    takeStatus(take, 'Interactive drafting error: ' + err.message, 'red');
     if (chatWindow) chatWindow.innerHTML += `<div class="issue mt-8">Error: ${escapeHtml(err.message)}</div>`;
   } finally {
-    if (state.draftAbort === abort) state.draftAbort = null;
-    if (btn) { btn.disabled = false; btn.innerText = '↺ Re-Draft Current Take'; }
+    if (isCurrentTakeRun(take)) {
+      take.abort = null;
+      updateTakeButton(take);
+      if (state.activeTakeId === takeId) updateTakeControls(take);
+    }
   }
 }
 // ------------------------------------------------ Step 4: Human turn-by-turn review
@@ -321,29 +319,26 @@ async function runInteractiveDrafting(isNewTake = false) {
 // the SAME card in place; it never spawns a second card and rejected text is never kept.
 // The full LLM prompt (with prior rejections + reasons) is hidden behind a Prompt button.
 // A 2-section song is always 2 cards, no matter how many rejects.
-async function runHumanReview(isNewTake = false) {
-  const params = currentParams();
+async function runHumanReview(take, params) {
   params.story = val('gw-storyline-text') || state.storyline || '';
   params.max_sections = null;
-  state.humanReview = { params: params, slots: [], isNewTake: isNewTake };
-  const chatWindow = el('gw-chat-turns-window');
-  const lyricsContent = el('lyrics-sheet-content');
-  if (chatWindow) chatWindow.innerHTML = '';
-  if (lyricsContent) lyricsContent.innerHTML = '<div class="empty-state">Accepted lines assemble here as you approve each turn.</div>';
-  setStatus('gw-status', 'Human review: edit, accept, or reject each turn.', 'yellow');
-  await drawNextSlot('');
+  const hr = { params, slots: [], take, busy: false };
+  take.humanReview = hr;
+  state.humanReview = hr;
+  take.lyricsPane.innerHTML = '<div class="empty-state">Accepted lines assemble here as you approve each turn.</div>';
+  takeStatus(take, 'Human review: edit, accept, or reject each turn.', 'yellow');
+  await drawNextSlot('', hr);
 }
 // The accepted lines from every slot, in order. This IS the song.
-function humanAcceptedTurns() {
-  return (state.humanReview.slots || [])
+function humanAcceptedTurns(hr = state.humanReview) {
+  return (hr.slots || [])
     .filter(function(s) { return s.accepted; })
     .map(function(s) { return { section: s.section, lines: s.lines }; });
 }
 // Draft the next unaccepted slot (or re-draft the active one on reject).
-async function drawNextSlot(rejectReason) {
-  const hr = state.humanReview;
-  if (!hr) return;
-  const indicator = el('gw-chat-turn-indicator');
+async function drawNextSlot(rejectReason, hr = state.humanReview) {
+  if (!hr || hr.busy || !isCurrentTakeRun(hr.take)) return;
+  hr.busy = true;
 
   // Find the active (unaccepted) slot; a reject re-draws it, first draft makes a new one.
   let idx = hr.slots.findIndex(function(s) { return !s.accepted; });
@@ -357,26 +352,30 @@ async function drawNextSlot(rejectReason) {
   }
 
   const body = Object.assign({}, hr.params, {
-    accepted: humanAcceptedTurns(),
+    accepted: humanAcceptedTurns(hr),
     reject_reason: rejectReason || '',
     rejections: rejHistory,
   });
   let data;
   try {
-    data = await postJSON('/api/ai/draft_turn', body);
+    data = await postJSON('/api/ai/draft_turn', body, hr.take.abort.signal);
   } catch (e) {
-    setStatus('gw-status', 'Turn error: ' + e.message, 'red');
+    hr.busy = false;
+    if (isCurrentTakeRun(hr.take)) takeStatus(hr.take, 'Turn error: ' + e.message + '. Try again or reset this take.', 'red');
     return;
   }
-  if (data.done) { await finalizeHumanReview(); return; }
-  if (indicator) indicator.innerText = `Turn ${data.turn_index + 1} / ${data.total_turns}`;
+  hr.busy = false;
+  if (!isCurrentTakeRun(hr.take)) return;
+  if (data.done) { await finalizeHumanReview(hr); return; }
+  hr.take.turnText = `Turn ${data.turn_index + 1} / ${data.total_turns}`;
+  if (state.activeTakeId === hr.take.takeId) updateTakeControls(hr.take);
   // A recurring chorus is auto-accepted (its lines were fixed by the first chorus).
   if (data.repeat_chorus) {
     hr.slots.push({ section: data.section, lines: data.lines, accepted: true,
                     lineNumbers: data.line_numbers, scheme: data.scheme, scan: [],
                     prompt: '(Repeat of the first chorus.)', rejections: [], repeat: true });
-    renderSlotCard(hr.slots.length - 1);
-    await drawNextSlot(null);
+    renderSlotCard(hr.slots.length - 1, hr);
+    await drawNextSlot(null, hr);
     return;
   }
   if (idx === -1) {
@@ -390,19 +389,18 @@ async function drawNextSlot(rejectReason) {
     lineNumbers: data.line_numbers, scheme: data.scheme, scan: data.scan || [],
     prompt: data.prompt || '', rejections: rejHistory, repeat: false,
   };
-  renderSlotCard(idx);
-  const ta = el('human-slot-text-' + idx);
-  if (ta) ta.focus();
+  renderSlotCard(idx, hr);
+  const ta = el('human-slot-text-' + hr.take.takeId + '-' + idx);
+  if (ta && state.activeTakeId === hr.take.takeId) ta.focus();
 }
-function renderSlotCard(idx) {
-  const hr = state.humanReview;
+function renderSlotCard(idx, hr = state.humanReview) {
   const slot = hr.slots[idx];
-  const chatWindow = el('gw-chat-turns-window');
+  const chatWindow = hr.take.chatPane;
   if (!chatWindow || !slot) return;
-  let card = el('human-slot-' + idx);
+  let card = el('human-slot-' + hr.take.takeId + '-' + idx);
   if (!card) {
     card = document.createElement('div');
-    card.id = 'human-slot-' + idx;
+    card.id = 'human-slot-' + hr.take.takeId + '-' + idx;
     card.className = 'chat-review-card mb-10';
     chatWindow.appendChild(card);
   }
@@ -435,13 +433,13 @@ function renderSlotCard(idx) {
     </div>
     ${modelPanels}
     <section class="turn-panel turn-panel-form" aria-label="Your review">
-      <label class="turn-panel-title" for="human-slot-text-${idx}">Your lines (edit before accepting)</label>
+      <label class="turn-panel-title" for="human-slot-text-${hr.take.takeId}-${idx}">Your lines (edit before accepting)</label>
       ${missingWarn}
-      <textarea class="pkg-box w-full fs-md mono min-h-90" id="human-slot-text-${idx}"
+      <textarea class="pkg-box w-full fs-md mono min-h-90" id="human-slot-text-${hr.take.takeId}-${idx}"
         oninput="onSlotEdited(${idx})">${escapeHtml(textValue)}</textarea>
       ${rejHtml}
       <div class="mt-8" ${slot.accepted || slot.repeat ? 'style="display:none"' : ''}>
-        <input type="text" class="field-input w-full" id="human-slot-reason-${idx}" aria-label="Reject reason"
+        <input type="text" class="field-input w-full" id="human-slot-reason-${hr.take.takeId}-${idx}" aria-label="Reject reason"
           placeholder="Reject reason / feedback to the model (optional for Try again)">
       </div>
       <div class="flex gap-8 mt-8" ${slot.repeat ? 'style="display:none"' : ''}>
@@ -458,7 +456,7 @@ function renderSlotCard(idx) {
 function onSlotEdited(idx) {
   const hr = state.humanReview;
   const slot = hr && hr.slots[idx];
-  const ta = el('human-slot-text-' + idx);
+  const ta = hr && el('human-slot-text-' + hr.take.takeId + '-' + idx);
   if (!slot || !ta) return;
   slot.lines = ta.value.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
   if (slot.accepted) renderAssembledSong();
@@ -466,7 +464,7 @@ function onSlotEdited(idx) {
 function acceptSlot(idx) {
   const hr = state.humanReview;
   const slot = hr && hr.slots[idx];
-  if (!slot) return;
+  if (!slot || hr.busy || !isCurrentTakeRun(hr.take)) return;
   onSlotEdited(idx);
   if (!slot.lines.length) { setStatus('gw-status', 'Add at least one line before accepting.', 'yellow'); return; }
   slot.accepted = true;
@@ -478,7 +476,7 @@ function tryAgainSlot(idx) {
   const hr = state.humanReview;
   const slot = hr && hr.slots[idx];
   if (!slot) return;
-  const reasonEl = el('human-slot-reason-' + idx);
+  const reasonEl = el('human-slot-reason-' + hr.take.takeId + '-' + idx);
   const reason = reasonEl ? reasonEl.value.trim() : '';
   drawNextSlot(reason);  // re-draws this same unaccepted slot in place
 }
@@ -495,7 +493,7 @@ function reopenSlot(idx) {
 // Assemble accepted slots into the live lyric sheet (left = right, one source).
 function renderAssembledSong() {
   const hr = state.humanReview;
-  const sheet = el('lyrics-sheet-content');
+  const sheet = hr && hr.take.lyricsPane;
   if (!hr || !sheet) return;
   const accepted = hr.slots.filter(function(s) { return s.accepted; });
   if (!accepted.length) {
@@ -518,25 +516,34 @@ function renderAssembledSong() {
   sheet.innerHTML = html;
   sheet.scrollTop = sheet.scrollHeight;
 }
-async function finalizeHumanReview() {
-  const hr = state.humanReview;
-  if (!hr) return;
-  setStatus('gw-status', 'Assembling your accepted lines…', 'yellow');
+async function finalizeHumanReview(hr = state.humanReview) {
+  if (!hr || hr.busy || !isCurrentTakeRun(hr.take)) return;
+  hr.busy = true;
+  takeStatus(hr.take, 'Assembling your accepted lines…', 'yellow');
   try {
-    const body = Object.assign({}, hr.params, { accepted: humanAcceptedTurns() });
-    const data = await postJSON('/api/ai/finalize_turns', body);
-    setStatus('gw-status', 'Song complete from your accepted turns.', 'green');
-    renderTake(data, hr.isNewTake);
+    const body = Object.assign({}, hr.params, { accepted: humanAcceptedTurns(hr) });
+    const data = await postJSON('/api/ai/finalize_turns', body, hr.take.abort.signal);
+    if (!isCurrentTakeRun(hr.take)) return;
+    hr.take.humanReview = null;
+    if (state.humanReview === hr) state.humanReview = null;
+    renderTake(data, hr.take.takeId);
+    takeStatus(hr.take, 'Song complete from your accepted turns.', 'green');
   } catch (e) {
-    setStatus('gw-status', 'Finalize error: ' + e.message, 'red');
+    if (isCurrentTakeRun(hr.take)) takeStatus(hr.take, 'Finalize error: ' + e.message, 'red');
+  } finally {
+    hr.busy = false;
   }
-  state.humanReview = null;
 }
 function discardAndStartOver() {
   if (!confirm('Discard current song draft and return to Step 1?')) return;
+  for (const take of Object.values(state.takes)) {
+    if (take.abort) take.abort.abort();
+  }
+  state.humanReview = null;
+  closeTakeModal();
   state.takes = {};
   state.nextTakeId = 1;
-  state.activeTakeId = 1;
+  state.activeTakeId = null;
   state.editingSongId = null;
   const switcher = el('ws-take-switcher');
   if (switcher) switcher.innerHTML = '<button type="button" class="pill active" id="btn-take-1" onclick="selectTake(1)">Take 1</button>';
@@ -547,21 +554,139 @@ function discardAndStartOver() {
   goToStep(1);
 }
 // ------------------------------------------------ Step 4: Generation & Takes
-async function runGenerateTake(isNewTake = false) {
-  return runInteractiveDrafting(isNewTake);
+function isCurrentTakeRun(take) {
+  return state.takes[take.takeId] === take && !(take.abort && take.abort.signal.aborted);
 }
+function takeStatus(take, text, color) {
+  take.statusText = text;
+  take.statusColor = color;
+  if (state.activeTakeId === take.takeId) setStatus('gw-status', text, color);
+}
+function ensureTakePanes(take) {
+  for (const [key, hostId, cls] of [
+    ['chatPane', 'gw-chat-turns-window', 'take-chat-pane'],
+    ['lyricsPane', 'lyrics-sheet-content', 'take-lyrics-pane']
+  ]) {
+    if (take[key]) continue;
+    const host = el(hostId);
+    if (!host) continue;
+    if (!host.querySelector('.' + cls)) host.innerHTML = '';
+    const pane = document.createElement('div');
+    pane.className = cls + ' hidden';
+    host.appendChild(pane);
+    take[key] = pane;
+  }
+}
+function updateTakeButton(take) {
+  const switcher = el('ws-take-switcher');
+  if (!switcher) return;
+  let btn = el('btn-take-' + take.takeId);
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pill';
+    btn.id = 'btn-take-' + take.takeId;
+    btn.onclick = function() { selectTake(take.takeId); };
+    switcher.appendChild(btn);
+  }
+  const running = take.status === 'running';
+  btn.innerHTML = 'Take ' + take.takeId + (running ? ' <span class="take-spinner" aria-hidden="true"></span>' : (take.status === 'failed' ? ' · Failed' : ''));
+  btn.setAttribute('aria-label', 'Take ' + take.takeId + (running ? ' — in progress' : ' — ' + (take.status || 'completed')));
+  btn.classList.toggle('active', state.activeTakeId === take.takeId);
+}
+function updateTakeControls(take) {
+  const indicator = el('gw-chat-turn-indicator');
+  if (indicator) indicator.innerText = take.turnText || 'Turn 0';
+  const copyBtn = el('btn-copy-chat-transcript');
+  if (copyBtn) copyBtn.classList.toggle('d-none', take.status !== 'completed');
+  const btn = el('btn-start-interactive-cowrite');
+  if (btn) btn.innerText = take.status === 'running' ? '↺ Reset Current Take' : '↺ Re-Draft Current Take';
+  setStatus('gw-status', take.statusText || 'Ready to craft.', take.statusColor);
+}
+function beginTake(isNewTake, resetTakeId) {
+  const takeId = resetTakeId || (!isNewTake && state.activeTakeId) || state.nextTakeId++;
+  state.nextTakeId = Math.max(state.nextTakeId, takeId + 1);
+  const previous = state.takes[takeId];
+  if (previous && previous.abort) previous.abort.abort();
+  if (previous) {
+    if (previous.chatPane) previous.chatPane.remove();
+    if (previous.lyricsPane) previous.lyricsPane.remove();
+  }
+  const take = { takeId, status: 'running', lyrics: '', songId: previous && previous.songId,
+    abort: new AbortController(), turnText: 'Turn 0' };
+  state.takes[takeId] = take;
+  ensureTakePanes(take);
+  updateTakeButton(take);
+  selectTake(takeId);
+  return take;
+}
+async function runGenerateTake(isNewTake = false) {
+  if (state.currentStep !== 4) return;
+  if (isNewTake) return onNewTakeClicked();
+  return onRedraftClicked();
+}
+function onNewTakeClicked() {
+  const active = state.takes[state.activeTakeId];
+  const running = active && active.status === 'running' ? active : Object.values(state.takes).find(t => t.status === 'running');
+  if (running) { openTakeModal(running.takeId); return; }
+  return runInteractiveDrafting(true);
+}
+function onRedraftClicked() {
+  const take = state.takes[state.activeTakeId];
+  if (take && take.status === 'running') { openTakeModal(take.takeId); return; }
+  return runInteractiveDrafting(false);
+}
+let modalTakeId = null;
+let modalReturnFocus = null;
+function openTakeModal(takeId) {
+  modalTakeId = takeId;
+  modalReturnFocus = document.activeElement;
+  el('take-modal-body').innerText = `Take ${takeId} is still in progress. Reset Take ${takeId} and restart it, or start a new take in parallel?`;
+  el('take-action-modal').classList.remove('hidden');
+  el('btn-modal-parallel').focus();
+}
+function closeTakeModal() {
+  el('take-action-modal').classList.add('hidden');
+  modalTakeId = null;
+  if (modalReturnFocus) modalReturnFocus.focus();
+}
+function onModalBackdropClick(event) {
+  if (event.target === el('take-action-modal')) closeTakeModal();
+}
+function onTakeModalReset() {
+  const takeId = modalTakeId;
+  closeTakeModal();
+  if (state.takes[takeId]) return runInteractiveDrafting(false, takeId);
+}
+function onTakeModalParallel() {
+  closeTakeModal();
+  return runInteractiveDrafting(true);
+}
+document.addEventListener('keydown', function(event) {
+  const modal = el('take-action-modal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeTakeModal(); }
+  if (event.key === 'Tab') {
+    const buttons = Array.from(modal.querySelectorAll('button'));
+    const first = buttons[0], last = buttons[buttons.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+});
 function selectTake(takeId) {
   const take = state.takes[takeId];
   if (!take) return;
   state.activeTakeId = takeId;
-
-  const buttons = document.querySelectorAll('.pill');
-  for (const btn of buttons) {
-    if (btn.id === 'btn-take-' + takeId) btn.classList.add('active');
-    else btn.classList.remove('active');
+  state.humanReview = take.humanReview || null;
+  if (take.songId) state.editingSongId = take.songId;
+  ensureTakePanes(take);
+  for (const other of Object.values(state.takes)) {
+    if (other.chatPane) other.chatPane.classList.toggle('hidden', other !== take);
+    if (other.lyricsPane) other.lyricsPane.classList.toggle('hidden', other !== take);
+    updateTakeButton(other);
   }
-
-  if (el('lyrics-sheet-content')) el('lyrics-sheet-content').innerHTML = formatLyricsWithBadges(take.lyrics);
+  if (take.status === 'completed' && take.lyricsPane) take.lyricsPane.innerHTML = formatLyricsWithBadges(take.lyrics);
+  updateTakeControls(take);
   if (el('pkg-songbench-box')) el('pkg-songbench-box').value = take.formatted_songbench || '';
   if (el('pkg-yue2-box')) el('pkg-yue2-box').value = take.formatted_yue2 || '';
   if (el('pkg-minimax-box')) el('pkg-minimax-box').value = take.formatted_minimax || '';
@@ -569,8 +694,9 @@ function selectTake(takeId) {
   if (el('craft-pills')) el('craft-pills').innerHTML = take.scansionPillsHtml || '';
   if (el('craft-trail-container')) el('craft-trail-container').innerHTML = take.trailHtml || '<div class="empty-state">No section trail available.</div>';
 }
-function renderTake(data, isNewTake) {
-  const takeId = isNewTake ? state.nextTakeId++ : (state.activeTakeId || state.nextTakeId++);
+function renderTake(data, takeId) {
+  const take = state.takes[takeId];
+  if (!take) return;
   const engine = data.engine_prompt || {};
 
   const meta = data.metadata || {};
@@ -658,7 +784,8 @@ function renderTake(data, isNewTake) {
     trailHtml += '</div>';
   }
 
-  state.takes[takeId] = {
+  Object.assign(take, {
+    status: 'completed',
     takeId: takeId,
     lyrics: data.lyrics,
     formatted_songbench: data.formatted_songbench || ((engine.songbench || '') + '\n\n' + data.lyrics),
@@ -670,31 +797,17 @@ function renderTake(data, isNewTake) {
     model_used: data.model_used || (data.generation && data.generation.model) || '',
     songId: data.song_id || null,
     generation: data.generation || null
-  };
+  });
   // A finished draft is already saved; re-drafting must add revisions to the
   // same song, not start a new one.
-  if (data.song_id) state.editingSongId = data.song_id;
-
-  const switcher = el('ws-take-switcher');
-  if (switcher) {
-    let btn = el('btn-take-' + takeId);
-    if (!btn) {
-      btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className='pill';
-      btn.id = 'btn-take-' + takeId;
-      btn.innerText = 'Take ' + takeId;
-      btn.onclick = function() { selectTake(takeId); };
-      switcher.appendChild(btn);
-    }
-  }
-
-  selectTake(takeId);
+  if (data.song_id && state.activeTakeId === takeId) state.editingSongId = data.song_id;
+  updateTakeButton(take);
+  if (state.activeTakeId === takeId) selectTake(takeId);
 }
 function toggleAudioDrawer() {
   const drawer = el('ws-view-audio');
   if (!drawer) return;
-  drawer.style.display = (drawer.style.display === 'none') ? 'grid' : 'none';
+  drawer.classList.toggle('hidden');
 }
 async function saveCurrentTake() {
   const currentTake = state.takes[state.activeTakeId || 1];

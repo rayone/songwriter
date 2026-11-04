@@ -244,6 +244,21 @@
   gap: 12px;
   font-size: 0.85rem;
 }
+.take-chat-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+.take-lyrics-pane {
+  display: block;
+  width: 100%;
+  white-space: pre-wrap;
+}
+.take-chat-pane.d-none, .take-chat-pane.hidden,
+.take-lyrics-pane.d-none, .take-lyrics-pane.hidden {
+  display: none !important;
+}
 /* Step 4 turn: prompt sent (indigo, collapsed) / LLM response (teal) /
    engine analysis (green pass, red fail) / manual review form (amber). */
 .turn-card {

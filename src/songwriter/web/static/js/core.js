@@ -49,11 +49,12 @@ async function getJSON(url) {
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return res.json();
 }
-async function postJSON(url, body) {
+async function postJSON(url, body, signal) {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal
   });
   if (!res.ok) {
     let detail = 'HTTP ' + res.status;

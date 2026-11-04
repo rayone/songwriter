@@ -451,7 +451,7 @@
           <div id="ws-take-switcher" class="flex gap-6 flex-wrap">
             <button type="button" class="pill active" id="btn-take-1" onclick="selectTake(1)">Take 1</button>
           </div>
-          <button type="button" class="take-add-btn" onclick="runGenerateTake(true)">+ New Take</button>
+          <button type="button" class="take-add-btn" id="btn-add-new-take" onclick="onNewTakeClicked()">+ New Take</button>
         </div>
         <div class="flex items-center gap-8">
           <button type="button" class="btn-secondary" onclick="toggleAudioDrawer()">Audio Packages</button>
@@ -500,7 +500,7 @@
               <button type="button" class="btn-secondary btn-sm d-none" id="btn-copy-chat-transcript" onclick="copyChatTranscript(this)">
                 Copy Transcript
               </button>
-              <button type="button" class="btn-secondary btn-sm" id="btn-start-interactive-cowrite" onclick="runInteractiveDrafting(false)">
+              <button type="button" class="btn-secondary btn-sm" id="btn-start-interactive-cowrite" onclick="onRedraftClicked()">
                 ↺ Re-Draft
               </button>
             </div>
@@ -546,6 +546,27 @@
         <div class="flex gap-8">
           <button type="button" class="btn-secondary" onclick="saveCurrentTake()">✓ Save Song to Library</button>
           <button type="button" class="btn-primary" onclick="loadTakeIntoStudio()">Open in Lyrics Editor ➔</button>
+        </div>
+      </div>
+
+      <!-- Take In Progress Modal -->
+      <div id="take-action-modal" class="modal-backdrop hidden" onclick="onModalBackdropClick(event)">
+        <div class="modal-dialog card card-elevated" role="dialog" aria-modal="true" aria-labelledby="take-modal-title">
+          <div class="card-header">
+            <span id="take-modal-title" class="c-bright fw-700 fs-md flex items-center gap-8">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              Take In Progress
+            </span>
+            <button type="button" class="btn-icon" onclick="closeTakeModal()" aria-label="Close dialog">✕</button>
+          </div>
+          <div class="fs-sm c-main lh-15 py-8" id="take-modal-body">
+            Take 1 is still generating lyrics. Would you like to reset Take 1 and restart it, or start a new take in parallel?
+          </div>
+          <div class="flex justify-end items-center gap-8 pt-10 divider-top flex-wrap">
+            <button type="button" class="btn-secondary" onclick="closeTakeModal()">Cancel</button>
+            <button type="button" class="btn-secondary" id="btn-modal-reset" onclick="onTakeModalReset()">↺ Reset Current Take</button>
+            <button type="button" class="btn-primary" id="btn-modal-parallel" onclick="onTakeModalParallel()">+ Start Parallel Take</button>
+          </div>
         </div>
       </div>
     </div>
