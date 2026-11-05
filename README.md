@@ -126,6 +126,23 @@ The installer:
 * Configures and enables `/etc/systemd/system/songwriter.service`.
 * Starts the web server bound to `http://0.0.0.0:8000`.
 
+**Update an existing install (including an LXC):**
+```sh
+sudo bash /opt/songwriter/deploy/install.sh --service --non-interactive
+```
+This reuses `deploy/.env`, pulls the configured branch, syncs dependencies,
+restarts the service, and waits for the health check. The changes must have been
+pushed to the remote repository first. Replace `/opt/songwriter` if installed elsewhere.
+
+**Check the running version:** the header beneath **SONGWRITER** shows the package
+version and the source commit, for example `v0.1.0 · 79688f1`. Click it for the full
+commit, branch, and exact tag at `/api/version` (normal application authentication
+applies). `(modified)` indicates tracked source changes at startup. The commit is
+captured when the server starts, so pulling without restarting does not make the
+old process claim to be running a new build. Installs without Git explicitly show
+`commit unavailable`. The installer also prints the deployed build after a successful
+restart. The database release tag is separate from the application version.
+
 ---
 
 ### Cloud Hosting (Render.com)

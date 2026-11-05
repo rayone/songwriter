@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from songwriter import settings as app_settings
 from songwriter import prompt_templates
+from songwriter.build_info import BUILD_INFO
 from songwriter.ai.cowriter import SongwriterCowriter
 from songwriter.ai.generation import SongGeneration
 from songwriter.db import corpus_db
@@ -48,7 +49,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Songwriter Studio & Cowriter API",
     description="Deterministic phonetic analysis, 4M+ unified rhyme database, 3.18M song corpus explorer, and AI music cowriter.",
-    version="1.2.0",
+    version=str(BUILD_INFO["version"]),
     lifespan=lifespan,
 )
 
@@ -1216,6 +1217,11 @@ def get_stats() -> dict[str, Any]:
     return {"reference_songs_count": cnt, "templates_count": t_cnt}
 
 
+@app.get("/api/version", summary="Running application build")
+def running_version() -> JSONResponse:
+    return JSONResponse(BUILD_INFO, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/healthz", summary="Liveness and data readiness (no auth)")
 def healthz() -> JSONResponse:
     """200 when both runtime databases are present, 503 otherwise.
@@ -1251,7 +1257,13 @@ app.mount("/static", RevalidatingStaticFiles(directory=Path(__file__).resolve().
 @app.get("/", response_class=HTMLResponse, summary="Songwriter Studio Web UI")
 def index() -> HTMLResponse:
     if UI_PATH.exists():
-        return HTMLResponse(content=UI_PATH.read_text(encoding="utf-8"))
+        page = UI_PATH.read_text(encoding="utf-8")
+        details = " · ".join(str(value) for value in (
+            BUILD_INFO["commit"], BUILD_INFO["branch"], BUILD_INFO["tag"]
+        ) if value)
+        page = page.replace("__SONGWRITER_BUILD_LABEL__", html.escape(str(BUILD_INFO["label"])))
+        page = page.replace("__SONGWRITER_BUILD_DETAILS__", html.escape(details or "Source commit unavailable", quote=True))
+        return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
     return HTMLResponse(content="<h1>UI file missing</h1>", status_code=500)
 
 @app.get("/favicon.ico", include_in_schema=False)

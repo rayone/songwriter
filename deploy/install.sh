@@ -359,6 +359,7 @@ if [ "$INSTALL_SERVICE" -eq 1 ]; then
   systemctl restart songwriter
   if wait_healthy; then
     echo "Service 'songwriter' is running on $SONGWRITER_HOST:$SONGWRITER_PORT."
+    echo "Deployed build: $("$PYTHON" -m songwriter.build_info)"
   else
     die "Service started but /healthz did not answer. Check: journalctl -u songwriter -n 50"
   fi

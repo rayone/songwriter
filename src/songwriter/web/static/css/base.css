@@ -34,6 +34,14 @@ header {
   top: 0;
   z-index: 100;
 }
+.brand-block { display: flex; flex-direction: column; gap: 3px; }
+.build-version {
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+  text-decoration: none;
+}
+.build-version:hover { color: var(--cyan); text-decoration: underline; }
 .brand {
   display: flex;
   align-items: center;
