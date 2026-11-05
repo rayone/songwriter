@@ -106,7 +106,7 @@ DEFAULT_BANNED = (
 # applied to fields, not echoed into the prompt's creative guidance.
 _TECHNICAL_ANSWERS = frozenset({
     "rhyme_register", "offensive_language", "allow_phrases", "banned", "target_mood",
-    "vocal", "vocal_type", "arrangement", "bpm", "musical_key", "scale",
+    "genre", "vocal", "vocal_type", "arrangement", "bpm", "musical_key", "scale",
     "syllable_target", "rhyme_scheme", "section_plan", "section_lines", "lines_per_turn",
     "validation_mode", "required_tone", "correction_strictness",
     "rhyme_sound_verse", "rhyme_sound_chorus", "rhyme_sound_bridge",
@@ -534,8 +534,9 @@ class SongGeneration:
         res_key = (key_ans[0] if key_ans else None) or music_key or ref.get("musical_key") or tmpl.get("music_key") or "C"
         res_scale = ((key_ans[1].strip("()").lower() if len(key_ans) > 1 else None)
                      or scale or ref.get("scale") or tmpl.get("scale") or "major")
-        res_genre = (_clean_genre(genre) or _clean_genre(ref.get("genre")) or _clean_genre(style)
-                     or _clean_genre(tmpl.get("genre")) or "Pop")
+        # A reference can lend structure without dictating the recording's genre.
+        res_genre = (ans.get("genre") or (genre or "").strip() or _clean_genre(style)
+                     or _clean_genre(tmpl.get("genre")) or _clean_genre(ref.get("genre")) or "Pop")
         vocal_ans = ans.get("vocal", "").split(" ")[0].lower() if ans.get("vocal") else ""
         res_vocal = vocal_ans or vocal or tmpl.get("vocal") or "melodic lead"
         roles = dict(vocal_roles or {})

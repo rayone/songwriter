@@ -53,7 +53,7 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 * **Cadence & Meter Diagnostics:** Real-time feedback on average syllable counts, variance, cadence consistency, and rhythm grid alignment.
 * **Cliché Detection:** Identifies overused phrasing windows and predictable rhyme pairs backed by real-world corpus statistics.
 * **Sensory & Emotional Mapping:** Visual breakdown of showing-vs-telling abstractions and emotional trajectories across verses, choruses, and bridges.
-* **AI Cowriter Engine:** Interactive turn-by-turn lyric generator with section contour planning, interview setup wizards, and reference song blueprints.
+* **AI Cowriter Engine:** Interactive turn-by-turn lyric generator with section contour planning, interview setup wizards, and reference song blueprints. References lend structure without replacing your genre. When genres differ, Producer Questions offers your original genre (default), the reference genre, and an AI-recommended alternative. Indie and other niche genres work even without a matching reference; available niche corpus matches are ranked ahead of broad catalog fallbacks.
 * **MusicStudio Integration (`/v1` API):** Production REST contract for DAW integration, supporting song revisions, metadata synchronization, and direct binary audio take uploads.
 * **Stdio MCP Server:** Plug-and-play Model Context Protocol tool provider compatible with Claude Desktop, Cursor, and any MCP client.
 * [**API for MusicStudio:** ](https://github.com/rayone/MusicStudio)

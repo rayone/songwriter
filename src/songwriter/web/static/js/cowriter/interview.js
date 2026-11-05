@@ -1,6 +1,15 @@
 // Cowriter Step 3: producer interview questions and answers.
 
 // ------------------------------------------------ Parameters
+// Keep the writer's genre independent from the reference's catalog label.
+function requestedGenre() {
+  const style = val('gw-style-input');
+  const meta = (state.activeTemplate && state.activeTemplate.metadata) || {};
+  if (meta.genre && (style === meta.audio_prompt || style === meta.title)) {
+    return [meta.genre, meta.subgenre].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' / ');
+  }
+  return style.split(',')[0].split('(')[0].trim();
+}
 function currentParams() {
   const bannedRaw = val('gw-banned');
   const banned = bannedRaw
@@ -22,6 +31,7 @@ function currentParams() {
     title: val('gw-title') || 'Untitled Song',
     prompt: val('gw-prompt'),
     style: val('gw-style-input') || null,
+    genre: requestedGenre() || null,
     template_id: isNaN(tmplRaw) ? null : tmplRaw,
     reference_song: state.referenceSong || null,
     bpm: isNaN(bpmRaw) ? null : bpmRaw,
@@ -53,6 +63,10 @@ function questionsContextKey() {
     ref.id || ((ref.title || '') + '|' + (ref.artist || '')),
     val('gw-prompt') || '',
     val('gw-storyline-text') || state.storyline || '',
+    requestedGenre(),
+    val('gw-style-input'),
+    val('gw-selected-template-id'),
+    ref.genre || '',
   ].join('::');
 }
 function questionsAreCurrent() {
@@ -77,6 +91,8 @@ async function loadInterviewQuestions() {
     const data = await postJSON('/api/ai/interview', {
       brief: val('gw-prompt') || 'An original song',
       style: val('gw-style-input') || '',
+      genre: requestedGenre(),
+      template_id: parseInt(val('gw-selected-template-id'), 10) || null,
       reference_song: state.referenceSong || null,
       story: val('gw-storyline-text') || state.storyline || '',
       model: val('gw-model') || state.selectedModel || '',
@@ -154,7 +170,7 @@ function renderQuestion(q, idx) {
       return '<label class="qopt">' +
         '<input type="radio" name="' + escapeHtml(name) + '" value="' + escapeHtml(v) + '"' +
         ' data-qid="' + escapeHtml(q.id) + '"' + (v === current ? ' checked' : '') + '>' +
-        '<span>' + escapeHtml(v) + '</span></label>';
+        '<span>' + escapeHtml(v) + (q.option_labels && q.option_labels[v] ? ' <small>(' + escapeHtml(q.option_labels[v]) + ')</small>' : '') + '</span></label>';
     }).join('');
     controlsHtml = '<div class="qopts">' + options + '</div>';
   }

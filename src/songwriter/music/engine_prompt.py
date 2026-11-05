@@ -407,6 +407,7 @@ SONG BRIEF
 {brief.strip() or 'An original song.'}
 
 CONFIRMED PRODUCTION SPEC
+- genre: {spec.get('genre')} (authoritative; do not replace with the reference/template genre)
 - tempo: {spec.get('bpm')} BPM
 - key: {spec.get('music_key')} {spec.get('scale')}
 - vocal: {'instrumental, no vocals' if instrumental else ('Duet (Singer A Male and Singer B Female with trading verses and chorus harmonies)' if str(spec.get('vocal', '')).lower() == 'duet' else spec.get('vocal'))}

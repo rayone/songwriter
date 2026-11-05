@@ -56,7 +56,7 @@ async function loadReferenceRecommendations() {
       brief: briefVal,
       story: storyVal,
       style: styleVal,
-      genre: styleVal,
+      genre: requestedGenre(),
       bpm: bpmVal,
       key: keyVal,
       scale: scaleVal,
@@ -382,7 +382,8 @@ function applyBlueprintSpecs(bp) {
   if (s.section_plan) setFieldValue('gw-plan', s.section_plan);
   if (s.rhyme_scheme) setFieldValue('gw-scheme', s.rhyme_scheme);
   if (s.vocal) setFieldValue('gw-vocal', s.vocal);
-  if (s.template_id) el('gw-selected-template-id').value = s.template_id;
+  // A reference supplies structural suggestions, not a replacement sound profile.
+  if (s.template_id && !val('gw-selected-template-id')) el('gw-selected-template-id').value = s.template_id;
   onVocalChanged();
   if (s.vocal_roles) {
     if (s.vocal_roles.singer_a) el('gw-singer-a').value = s.vocal_roles.singer_a;

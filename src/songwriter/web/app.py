@@ -152,6 +152,7 @@ class PreviewInstructionsRequest(BaseModel):
 class InterviewRequest(BaseModel):
     brief: str = Field(default="", description="Song brief: story, scene, or subject")
     style: str | None = Field(default=None, description="Generic style direction")
+    genre: str | None = Field(default=None, description="Writer's genre, independent of the reference")
     template_id: int | None = Field(default=None, description="Production template ID")
     reference_song: dict[str, Any] | None = Field(default=None, description="Reference song blueprint")
     story: str | None = Field(default="", description="Step 1 narrative; questions and their defaults must agree with it")
@@ -409,6 +410,7 @@ def interview(req: InterviewRequest) -> dict[str, Any]:
     return cowriter.interview(
         brief=req.brief,
         style=req.style or "",
+        genre=req.genre,
         template_id=req.template_id,
         reference_song=req.reference_song,
         story=req.story or "",

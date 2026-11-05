@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import re
-import random
 import socket
 import urllib.error
 import urllib.request
@@ -782,9 +781,11 @@ class SongwriterCowriter:
                 return "pop"
             if any(k in full for k in ["rock", "metal", "punk"]):
                 return "rock"
-            return "pop"
+            return ""
 
         corpus_genre = resolve_corpus_genre(f"{genre} {style}")
+        target_genre = (genre or style).split(',')[0].split('(')[0].strip()
+        genre_terms = list(dict.fromkeys(t.strip().casefold() for t in re.split(r"[/,;]", target_genre) if t.strip()))
         genre_combined = f"{genre} {style}".lower()
         curated_catalog = [
             ("Save Your Tears", "The Weeknd", "pop", 118.0, "C", "major", "80s synth-pop groove: driving 118 BPM pulse with syncopated conversational verses and a bittersweet hook."),
@@ -855,6 +856,7 @@ class SongwriterCowriter:
                 "scale": c_scale,
                 "guidance": desc,
                 "is_curated": True,
+                "genre_priority": 2 if any(term in c_genre.casefold() for term in genre_terms) else (1 if c_genre == corpus_genre else 0),
             }))
         abc_ids = self.workbench.searcher.abc_song_ids()
         try:
@@ -866,8 +868,14 @@ class SongwriterCowriter:
                 # songs that have an ABC score, so the LIMIT isn't exhausted by
                 # closer-BPM songs that lack MIDI.
                 midi_clause = ""
-                params: list[Any] = [float(target_bpm), float(target_bpm) - bpm_window,
-                                     float(target_bpm) + bpm_window, corpus_genre, corpus_genre]
+                # Search all catalog genres; do not force unknown styles into Pop.
+                match_parts = ["(contains(lower(coalesce(genre, '')), ?) OR contains(lower(coalesce(tag, '')), ?))" for _ in genre_terms]
+                exact_match = " OR ".join(match_parts) or "FALSE"
+                genre_rank = f"CASE WHEN {exact_match} THEN 2 WHEN lower(genre) = ? OR lower(tag) = ? THEN 1 ELSE 0 END"
+                params: list[Any] = [float(target_bpm)]
+                for term in genre_terms:
+                    params.extend([term, term])
+                params.extend([corpus_genre, corpus_genre, float(target_bpm) - bpm_window, float(target_bpm) + bpm_window])
                 if has_midi and abc_ids:
                     placeholders = ",".join("?" * len(abc_ids))
                     midi_clause = f"AND song_id IN ({placeholders})"
@@ -876,25 +884,25 @@ class SongwriterCowriter:
                     f"""
                     SELECT song_id, title, artist, genre, tag, year, tempo_bpm, musical_key, scale,
                            substr(lyrics, 1, 160) AS preview,
-                           abs(tempo_bpm - ?) AS bpm_diff
+                           abs(tempo_bpm - ?) AS bpm_diff,
+                           {genre_rank} AS genre_match
                     FROM songs
                     WHERE tempo_bpm BETWEEN ? AND ?
-                      AND (genre = ? OR tag = ?)
                       AND lyrics IS NOT NULL AND length(lyrics) > 60
                       {midi_clause}
-                    ORDER BY bpm_diff ASC
+                    ORDER BY genre_match DESC, bpm_diff ASC, song_id ASC
                     LIMIT 80
                     """,
                     params,
                 )
                 for r in corpus_rows:
-                    s_id, r_title, r_artist, r_genre, r_tag, r_year, r_bpm, r_key, r_scale, r_prev, bpm_diff = r
+                    s_id, r_title, r_artist, r_genre, r_tag, r_year, r_bpm, r_key, r_scale, r_prev, bpm_diff, genre_match = r
                     c_key_id = f"{r_title.lower()}::{r_artist.lower()}"
                     if c_key_id in seen_keys:
                         continue
                     seen_keys.add(c_key_id)
 
-                    c_score = 6.0
+                    c_score = 30.0 if genre_match == 2 else (6.0 if genre_match == 1 else 0.0)
                     c_score += max(0.0, 5.0 - (float(bpm_diff) / 3.0))
                     if r_key and str(r_key).upper() == target_key.upper():
                         c_score += 3.0
@@ -923,23 +931,23 @@ class SongwriterCowriter:
                         "preview": (r_prev or "").replace("\n", " ").strip() + "...",
                         "guidance": guidance_text,
                         "is_curated": False,
+                        "genre_priority": int(genre_match),
                     }))
         except Exception:
             pass
 
-        scored_candidates.sort(key=lambda x: -x[0])
+        scored_candidates.sort(key=lambda x: (x[1]["genre_priority"], x[0]), reverse=True)
         top_pool = [c for _, c in scored_candidates[:25]]
         if not top_pool:
             return []
 
-        # Random sample for variance; when has_midi is on, draw from the whole
-        # scored pool (not just top 25) so MIDI-bearing songs aren't starved.
-        pool = top_pool if not has_midi else [c for _, c in scored_candidates]
-        chosen_candidates = random.sample(pool, k=min(len(pool), max(limit * 4, 20))) if has_midi \
-            else random.sample(top_pool, k=min(limit, len(top_pool)))
+        # Preserve the ranking instead of randomly burying niche corpus matches
+        # beneath famous curated tracks. Keep extra candidates for MIDI filtering.
+        chosen_candidates = [c for _, c in scored_candidates] if has_midi else top_pool
 
 
         recommendations: list[dict[str, Any]] = []
+        recommended_keys: set[str] = set()
         for c in chosen_candidates:
             if len(recommendations) >= limit:
                 break
@@ -991,6 +999,12 @@ class SongwriterCowriter:
                 }
             if has_midi and not rec["has_midi"]:
                 continue
+            rec_key = f"{rec['title'].casefold()}::{(rec['artist'] or '').casefold()}"
+            if rec_key in recommended_keys:
+                continue
+            recommended_keys.add(rec_key)
+            rec["target_genre"] = target_genre
+            rec["guidance"] += " Structural/phrasing reference only; choose your target genre independently in Step 3."
             recommendations.append(rec)
         return recommendations
 
@@ -1126,6 +1140,7 @@ class SongwriterCowriter:
         story: str = "",
         model: str = "",
         use_model: bool = True,
+        genre: str | None = None,
     ) -> dict[str, Any]:
         """Ask the writer the questions a producer would ask, each with a usable default.
 
@@ -1134,8 +1149,25 @@ class SongwriterCowriter:
         the three craft questions that depend on the brief (angle, imagery, hook);
         if it fails or returns unusable output, deterministic fallbacks are used.
         """
-        model = (model or "").strip() or self.get_default_model()
-        defaults = self.resolve_defaults(style=style, template_id=template_id)
+        model = (model or "").strip() or (self.get_default_model() if use_model else "")
+        defaults = self.resolve_defaults(style=style, template_id=template_id, genre=genre)
+        writer_genre = (genre or "").strip() or style.split(',')[0].split('(')[0].strip() or defaults["genre"]
+        reference_genre = str((reference_song or {}).get("genre") or "").strip()
+        defaults["genre"] = writer_genre
+        genre_question = None
+        if reference_genre and writer_genre.casefold() != reference_genre.casefold():
+            recommendation, ai_generated = self._recommend_genre(
+                brief, story, writer_genre, reference_genre, model, use_model,
+            )
+            genre_question = {
+                "id": "genre", "category": "production", "kind": "options",
+                "question": "Which genre should the new song use?",
+                "why": "Your sound profile and reference differ. The reference can supply structure without changing your genre.",
+                "options": [writer_genre, reference_genre, recommendation],
+                "option_labels": {writer_genre: "Your original genre", reference_genre: "Reference genre",
+                                  recommendation: "AI recommendation" if ai_generated else "Suggested blend — AI unavailable"},
+                "default": writer_genre,
+            }
         if reference_song:
             ref_bpm = reference_song.get("tempo_bpm") or reference_song.get("bpm")
             if ref_bpm:
@@ -1144,8 +1176,6 @@ class SongwriterCowriter:
                 defaults["music_key"] = reference_song.get("musical_key")
             if reference_song.get("scale"):
                 defaults["scale"] = reference_song.get("scale")
-            if reference_song.get("genre"):
-                defaults["genre"] = reference_song.get("genre")
 
         bpm_default = str(defaults["bpm"])
         bpm_options = [
@@ -1406,6 +1436,11 @@ class SongwriterCowriter:
             },
         ]
 
+        if genre_question:
+            production_questions.insert(0, genre_question)
+        # Model-written craft questions must not shadow authoritative production controls.
+        reserved_ids = {q["id"] for q in creative_questions + production_questions} | {"genre"}
+        craft = [q for q in craft if q["id"] not in reserved_ids]
         questions = craft + creative_questions + production_questions
 
         return {
@@ -1416,6 +1451,35 @@ class SongwriterCowriter:
             "model_used": model if craft and use_model else None,
         }
 
+    def _recommend_genre(
+        self, brief: str, story: str, writer_genre: str, reference_genre: str,
+        model: str, use_model: bool,
+    ) -> tuple[str, bool]:
+        """One optional alternative; never replace the writer's original default."""
+        fallback = f"{writer_genre} / {reference_genre} fusion"
+        if use_model:
+            prompt = (
+                "Recommend one genre for an original song. Preserve niche/independent genres; "
+                "do not assume the reference's popularity or catalog genre defines the new song. "
+                "Suggest a distinct, musically coherent alternative or hybrid, different from BOTH inputs. "
+                "Return JSON only: {\"genre\": \"short genre name\"}.\n"
+                + json.dumps({"writer_genre": writer_genre, "reference_genre": reference_genre,
+                              "brief": brief, "story": story}, ensure_ascii=False)
+            )
+            try:
+                data = self._extract_json(self._chat(
+                    [{"role": "user", "content": prompt}], model=model, temperature=0.4, max_tokens=120,
+                ))
+                candidate = data.get("genre") if isinstance(data, dict) else None
+                if isinstance(candidate, str):
+                    candidate = candidate.strip()
+                    if (candidate and len(candidate) <= 120 and '\n' not in candidate
+                            and candidate.casefold() not in {writer_genre.casefold(), reference_genre.casefold()}):
+                        return candidate, True
+            except Exception:
+                pass
+        return fallback, False
+
     def _craft_questions(
         self, brief: str, defaults: dict[str, Any], model: str,
         reference_song: dict[str, Any] | None = None, story: str = "",
@@ -1424,7 +1488,8 @@ class SongwriterCowriter:
         if reference_song:
             ref_context = (
                 f"\nReference track blueprint: '{reference_song.get('title')}' by {reference_song.get('artist')} "
-                f"({reference_song.get('genre')}). Structure questions around this style."
+                f"(catalog genre: {reference_song.get('genre')}). Use it for structure and phrasing only. "
+                f"The writer's target genre is {defaults['genre']}; do not replace it with the reference genre."
             )
             num_questions = 3
             question_scope = "the 3 questions a professional co-writer would ask before drafting lyrics for this brief"
@@ -1610,7 +1675,10 @@ Respond with JSON only, no prose, in exactly this shape:
         resolved_bpm = bpm or bpm_hint or self._clean(meta.get("bpm")) or 92
         resolved_key = music_key or self._clean(meta.get("music_key")) or "C"
         resolved_scale = scale or self._clean(meta.get("scale")) or "major"
-        resolved_genre = genre or style or " / ".join(
+        genre_answer = (answers or {}).get("genre")
+        if isinstance(genre_answer, dict):
+            genre_answer = genre_answer.get("answer")
+        resolved_genre = genre_answer or genre or style or " / ".join(
             p for p in (self._clean(meta.get("genre")), self._clean(meta.get("subgenre"))) if p
         ) or "Pop"
         # A template may be marked instrumental. Since this call produces lyrics,
@@ -1662,7 +1730,8 @@ Respond with JSON only, no prose, in exactly this shape:
         if ref_title and ref_artist:
             specs.append(
                 f"- Reference song blueprint: inspired by the structural pacing and metric groove of '{ref_title}' by {ref_artist} "
-                f"({reference_song.get('genre', 'Pop')}). Do NOT copy any words, character names, or phrases; write original lyrics strictly for the brief."
+                f"(catalog genre: {reference_song.get('genre', 'unknown')}). The new song's genre remains {resolved_genre}; "
+                "borrow structure and phrasing only. Do NOT copy any words, character names, or phrases; write original lyrics strictly for the brief."
             )
 
         if str(resolved_vocal).strip().lower() == "duet":
@@ -1677,7 +1746,7 @@ Respond with JSON only, no prose, in exactly this shape:
             )
 
         if style:
-            specs.append(f"- Style direction: {style}")
+            specs.append(f"- Original style direction: {style}. Use only where compatible with the chosen genre ({resolved_genre}).")
 
         # `engine["fields"]` already separated the section arc out of
         # groove_foundation; using the raw segment here would put
@@ -2339,8 +2408,8 @@ Return a valid JSON object strictly matching this schema. No markdown formatting
                 ref_details.append(
                     "  • Voice: keep the story's events, but say them the way the reference's singer "
                     "talks -- same attitude, same short sentence length, same directness. Treat the "
-                    "story as the singer's own lived material in the reference's genre, never as a "
-                    "storybook to narrate. Copy the reference's rhythm and stance, never its words.")
+                    f"story as the singer's own lived material in the chosen genre ({gen.genre}), never as a "
+                    "storybook to narrate. Borrow the reference's rhythm and stance, never its words or catalog genre.")
         ref_str = ("\n- Reference Track & Production Blueprint:\n" + "\n".join(ref_details)) if ref_details else ""
 
         # Validation knobs are operator-editable in Settings (not per-song). The
