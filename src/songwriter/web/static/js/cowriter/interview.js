@@ -123,8 +123,9 @@ function renderQuestions() {
     host.innerHTML = '<div class="empty-state">No questions yet.</div>';
     return;
   }
-  const creative = state.questions.filter(function(q) { return q.category === 'creative' || !q.category; });
-  const production = state.questions.filter(function(q) { return q.category === 'production'; });
+  // Older saved interviews classified genre as production; keep it on the left too.
+  const creative = state.questions.filter(function(q) { return q.id === 'genre' || q.category === 'creative' || !q.category; });
+  const production = state.questions.filter(function(q) { return q.id !== 'genre' && q.category === 'production'; });
   function column(title, items, startIdx) {
     if (!items.length) return '';
     return '<div class="qcol"><h3 class="qgroup-title">' + title + '</h3>' +

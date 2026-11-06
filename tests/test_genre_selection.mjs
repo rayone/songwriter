@@ -68,6 +68,20 @@ test('interview receives genre and template; stale genre replies are ignored', a
   assert.equal(c.state.questions.length, 0);
 });
 
+test('genre belongs in the left creative column, including older saved interviews', () => {
+  const { c, nodes } = harness();
+  c.state.questions = [
+    { id: 'bpm', category: 'production', question: 'Tempo', default: '120', options: ['120'] },
+    { id: 'genre', category: 'production', question: 'Choose a genre', default: 'Indie', options: ['Indie', 'Pop'] }
+  ];
+  c.renderQuestions();
+  const html = nodes.get('gw-questions').innerHTML;
+  const genrePosition = html.indexOf('id="qcard-genre"');
+  assert.ok(genrePosition > html.indexOf('Creative direction'));
+  assert.ok(genrePosition < html.indexOf('>Production</h3>'));
+  assert.equal(html.split('id="qcard-genre"').length - 1, 1);
+});
+
 test('AI labels are visible but do not contaminate saved genre values', () => {
   const { c } = harness();
   const q = { id: 'genre', question: 'Choose a genre', default: 'Indie', options: ['Indie', 'Pop', 'Indie Folk'], option_labels: { 'Indie Folk': 'AI recommendation' } };

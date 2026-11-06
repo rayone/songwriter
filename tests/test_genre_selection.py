@@ -30,6 +30,7 @@ def test_conflict_has_three_choices_and_keeps_original_default(cowriter):
     question = next(q for q in data['questions'] if q['id'] == 'genre')
     assert question['options'] == ['Progressive House / Vocal Trance', 'Pop', 'Melodic House']
     assert question['default'] == 'Progressive House / Vocal Trance'
+    assert question['category'] == 'creative'
     assert question['option_labels']['Melodic House'] == 'AI recommendation'
     assert data['defaults']['genre'] == 'Progressive House / Vocal Trance'
     assert 'Progressive House / Vocal Trance' in cowriter._chat.call_args.args[0][0]['content']

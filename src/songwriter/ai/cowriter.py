@@ -1160,7 +1160,7 @@ class SongwriterCowriter:
                 brief, story, writer_genre, reference_genre, model, use_model,
             )
             genre_question = {
-                "id": "genre", "category": "production", "kind": "options",
+                "id": "genre", "category": "creative", "kind": "options",
                 "question": "Which genre should the new song use?",
                 "why": "Your sound profile and reference differ. The reference can supply structure without changing your genre.",
                 "options": [writer_genre, reference_genre, recommendation],
@@ -1437,7 +1437,7 @@ class SongwriterCowriter:
         ]
 
         if genre_question:
-            production_questions.insert(0, genre_question)
+            creative_questions.insert(0, genre_question)
         # Model-written craft questions must not shadow authoritative production controls.
         reserved_ids = {q["id"] for q in creative_questions + production_questions} | {"genre"}
         craft = [q for q in craft if q["id"] not in reserved_ids]
