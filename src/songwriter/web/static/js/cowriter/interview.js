@@ -86,7 +86,8 @@ async function loadInterviewQuestions() {
   const host = el('gw-questions');
   if (!host) return;
   host.innerHTML = '<div class="empty-state">Generating brief-specific craft questions...</div>';
-  setStatus('gw-interview-status', 'Consulting AI producer...', 'yellow');
+  const producerModel = (val('gw-model') || state.selectedModel || '').trim();
+  setStatus('gw-interview-status', 'Consulting ' + (producerModel || 'the model') + '...', 'yellow');
   try {
     const data = await postJSON('/api/ai/interview', {
       brief: val('gw-prompt') || 'An original song',

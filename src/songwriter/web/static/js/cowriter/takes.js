@@ -1,7 +1,14 @@
 // Cowriter Step 4: interactive drafting, takes and saving.
 
+// The model name shown in labels. Prefer the model a take actually ran with,
+// falling back to the current selection so labels never read a bare "the LLM".
+function modelLabel(modelName) {
+  const name = (modelName || state.selectedModel || (el('gw-model') && el('gw-model').value) || '').trim();
+  return name || 'the model';
+}
+
 // Step 4 turn panels. Each turn shows three separate, colour-coded elements:
-// the prompt we sent (collapsed), the LLM's response, and the engine's analysis.
+// the prompt we sent (collapsed), the model's response, and the engine's analysis.
 // Manual validation adds its edit form below these.
 function turnCardId(turnId, attempt, takeId) {
   return `take-${takeId}-turn-${turnId}-${attempt}`;
@@ -10,14 +17,14 @@ function turnSlot(turnId, attempt, name, takeId) {
   const card = el(turnCardId(turnId, attempt, takeId));
   return card ? card.querySelector(`[data-slot="${name}"]`) : null;
 }
-function promptPanelHtml(prompt) {
+function promptPanelHtml(prompt, modelName) {
   return `
     <details class="turn-panel turn-panel-prompt">
-      <summary class="turn-panel-title" style="cursor:pointer">Prompt sent to the LLM</summary>
+      <summary class="turn-panel-title" style="cursor:pointer">Prompt sent to ${escapeHtml(modelLabel(modelName))}</summary>
       <div class="mono fs-2xs c-muted pre-wrap max-h-200 scroll-y lh-14 mt-4">${escapeHtml(prompt || '')}</div>
     </details>`;
 }
-function responsePanelInner(cleaned, raw) {
+function responsePanelInner(cleaned, raw, modelName) {
   const rawText = (raw || '').trim();
   const cleanText = (cleaned || '').trim();
   const lines = cleanText
@@ -28,12 +35,12 @@ function responsePanelInner(cleaned, raw) {
     ? `<details class="mt-4"><summary class="fs-2xs c-dim" style="cursor:pointer">Raw reply (before cleanup)</summary>
          <div class="mono fs-2xs c-muted pre-wrap mt-4">${escapeHtml(rawText)}</div></details>`
     : '';
-  return `<div class="turn-panel-title">LLM response</div>${lines}${rawHtml}`;
+  return `<div class="turn-panel-title">${escapeHtml(modelLabel(modelName))} response</div>${lines}${rawHtml}`;
 }
-function critiquePanelHtml(critique) {
+function critiquePanelHtml(critique, modelName) {
   if (!critique) return '';
   const passed = critique.passed !== false;
-  const verdict = passed ? '✓ Passed LLM critique' : '✗ Failed LLM critique';
+  const verdict = passed ? '✓ Passed critique' : '✗ Failed critique';
   const dims = [
     { key: 'rhyme_integrity', label: 'Rhyme Integrity' },
     { key: 'vernacular', label: 'Vernacular' },
@@ -57,7 +64,7 @@ function critiquePanelHtml(critique) {
     </details>` : '';
 
   return `
-    <div class="turn-panel-title">LLM Critique <span class="turn-verdict">${verdict}</span></div>
+    <div class="turn-panel-title">${escapeHtml(modelLabel(modelName))} Critique <span class="turn-verdict">${verdict}</span></div>
     ${summary}
     <div class="mt-3">${rows}</div>
     ${promptHtml}
@@ -70,6 +77,7 @@ function copyChatTranscript(btn) {
 
   const cards = chatWindow.querySelectorAll('.turn-card');
   const out = [];
+  const label = modelLabel(take.model);
 
   cards.forEach(function(card) {
     const eyebrow = (card.querySelector('.eyebrow')?.textContent || '').trim();
@@ -78,14 +86,14 @@ function copyChatTranscript(btn) {
     const promptNode = card.querySelector('.turn-panel-prompt .pre-wrap');
     const promptText = (promptNode?.textContent || '').trim();
     if (promptText) {
-      out.push('Prompt sent to the LLM:');
+      out.push('Prompt sent to ' + label + ':');
       out.push(promptText);
     }
 
     const respLines = Array.from(card.querySelectorAll('.turn-panel-response .fs-md')).map(l => l.textContent.trim()).filter(Boolean);
     const rawNode = card.querySelector('.turn-panel-response details .pre-wrap');
     const rawText = (rawNode?.textContent || '').trim();
-    out.push('LLM response:');
+    out.push(label + ' response:');
     if (respLines.length) {
       out.push(respLines.join('\n'));
     } else if (rawText) {
@@ -235,16 +243,16 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
               <div class="eyebrow c-dim">
                 Turn ${ev.turn_id}: [${escapeHtml(ev.section || '')}] ${escapeHtml(ev.turn_type || '')} · Attempt ${ev.attempt}/${ev.max_attempts || ''}
               </div>
-              ${promptPanelHtml(ev.prompt)}
-              <section class="turn-panel turn-panel-response" aria-label="LLM response" data-slot="response">
-                <div class="turn-panel-title">LLM response</div>
-                <div class="fs-xs c-dim">Waiting for the model…</div>
+              ${promptPanelHtml(ev.prompt, take.model)}
+              <section class="turn-panel turn-panel-response" aria-label="${escapeHtml(modelLabel(take.model))} response" data-slot="response">
+                <div class="turn-panel-title">${escapeHtml(modelLabel(take.model))} response</div>
+                <div class="fs-xs c-dim">Waiting for ${escapeHtml(modelLabel(take.model))}…</div>
               </section>
               <section class="turn-panel turn-panel-analysis" aria-label="Engine analysis" data-slot="analysis">
                 <div class="turn-panel-title">Engine analysis</div>
                 <div class="fs-xs c-dim">Pending response.</div>
               </section>
-              <section class="turn-panel turn-panel-critique d-none" aria-label="LLM Critique" data-slot="critique">
+              <section class="turn-panel turn-panel-critique d-none" aria-label="${escapeHtml(modelLabel(take.model))} Critique" data-slot="critique">
               </section>
             `;
             chatWindow.appendChild(card);
@@ -253,7 +261,7 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
         } else if (ev.type === 'response') {
           const slot = turnSlot(ev.turn_id, ev.attempt, 'response', takeId);
           if (slot) {
-            slot.innerHTML = responsePanelInner(ev.response, ev.raw);
+            slot.innerHTML = responsePanelInner(ev.response, ev.raw, take.model);
             chatWindow.scrollTop = chatWindow.scrollHeight;
           }
         } else if (ev.type === 'validation') {
@@ -271,7 +279,7 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
             slot.classList.remove('d-none');
             slot.classList.toggle('pass', ev.critique.passed !== false);
             slot.classList.toggle('fail', ev.critique.passed === false);
-            slot.innerHTML = critiquePanelHtml(ev.critique);
+            slot.innerHTML = critiquePanelHtml(ev.critique, take.model);
             chatWindow.scrollTop = chatWindow.scrollHeight;
           }
         } else if (ev.type === 'line_accepted') {
@@ -419,9 +427,9 @@ function renderSlotCard(idx, hr = state.humanReview) {
   card.classList.toggle('is-accepted', !!slot.accepted);
   // Repeat choruses have no model turn, so only the lyric form applies.
   const modelPanels = slot.repeat ? '' : `
-    ${promptPanelHtml(slot.prompt)}
-    <section class="turn-panel turn-panel-response" aria-label="LLM response">
-      ${responsePanelInner((slot.response || []).join('\n'), slot.raw)}
+    ${promptPanelHtml(slot.prompt, hr.take.model)}
+    <section class="turn-panel turn-panel-response" aria-label="${escapeHtml(modelLabel(hr.take.model))} response">
+      ${responsePanelInner((slot.response || []).join('\n'), slot.raw, hr.take.model)}
     </section>
     <section class="turn-panel turn-panel-analysis ${missing ? 'fail' : 'pass'}" aria-label="Engine analysis">
       ${analysisPanelInner(!missing, slot.scan || [], [])}
@@ -612,8 +620,11 @@ function beginTake(isNewTake, resetTakeId) {
     if (previous.chatPane) previous.chatPane.remove();
     if (previous.lyricsPane) previous.lyricsPane.remove();
   }
+  // Capture the model this take runs with, so its labels stay correct even if the
+  // dropdown selection changes before the next take.
+  const model = (state.selectedModel || (el('gw-model') && el('gw-model').value) || '').trim();
   const take = { takeId, status: 'running', lyrics: '', songId: previous && previous.songId,
-    abort: new AbortController(), turnText: 'Turn 0' };
+    model: model, abort: new AbortController(), turnText: 'Turn 0' };
   state.takes[takeId] = take;
   ensureTakePanes(take);
   updateTakeButton(take);
@@ -795,6 +806,7 @@ function renderTake(data, takeId) {
     scansionPillsHtml: scansionPills,
     trailHtml: trailHtml,
     model_used: data.model_used || (data.generation && data.generation.model) || '',
+    model: take.model || data.model_used || (data.generation && data.generation.model) || '',
     songId: data.song_id || null,
     generation: data.generation || null
   });

@@ -56,6 +56,7 @@ function harness(mode = '') {
   }
   context.postJSON = (url, body) => new Promise(resolve => turns.push({ url, body, resolve }));
   context.state.currentStep = 4;
+  context.state.selectedModel = 'glm-4.6';
   const emit = (i, event) => requests[i].controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify(event) + '\n\n'));
   const finish = (i, lyrics) => { emit(i, { type: 'complete', lyrics }); requests[i].controller.close(); };
   return { c: context, requests, turns, nodes, emit, finish };
@@ -199,4 +200,30 @@ test('resetting human review ignores stale turn responses and preserves the para
   await Promise.all([parallel, reset]);
   assert.equal(c.state.takes[1].humanReview.slots[0].section, 'Replacement');
   assert.equal(c.state.takes[2].humanReview.slots[0].section, 'Parallel');
+});
+
+test('turn panels name the model that ran the take, not a generic LLM label', async () => {
+  const { c, emit } = harness();
+  c.runGenerateTake(false);
+  emit(0, { type: 'prompt', turn_id: 1, attempt: 1, section: 'Verse', turn_type: 'verse', max_attempts: 3, prompt: 'write a line' });
+  await tick();
+  const chat = c.state.takes[1].chatPane;
+  const card = chat.children[chat.children.length - 1];
+  assert.match(card.innerHTML, /Prompt sent to glm-4\.6/);
+  assert.match(card.innerHTML, /glm-4\.6 response/);
+  assert.doesNotMatch(card.innerHTML, /sent to the LLM|LLM response|LLM Critique/);
+});
+
+test('a take keeps its own model label after the dropdown selection changes', () => {
+  const { c } = harness();
+  c.runGenerateTake(false);
+  c.state.selectedModel = 'some-other-model';
+  assert.equal(c.state.takes[1].model, 'glm-4.6');
+});
+
+test('model label falls back cleanly when no model is known', () => {
+  const { c } = harness();
+  c.state.selectedModel = '';
+  assert.equal(c.modelLabel(''), 'the model');
+  assert.equal(c.modelLabel('claude-x'), 'claude-x');
 });

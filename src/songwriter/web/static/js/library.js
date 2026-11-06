@@ -291,6 +291,7 @@ async function loadCraftedSongIntoCowriter() {
     scansionPillsHtml: '',
     trailHtml: '<div class="empty-state">Loaded from library: ' + escapeHtml(g.title) + ' (revision ' + res.revision + ')</div>',
     model_used: g.model || '',
+    model: g.model || '',
     songId: res.song_id,
     generation: g
   };
