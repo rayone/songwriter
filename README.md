@@ -73,6 +73,21 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 
 ## 4. Setup & Running
 
+### Versioning: code vs. data (read this first)
+
+This project has **two independent version streams**, and the GitHub Releases page only shows the second one. This commonly causes confusion, so it is spelled out here:
+
+| Stream | Where it lives | How it is versioned | What the GitHub "Releases" page shows |
+|---|---|---|---|
+| **Application code** | `main` branch commits | Short commit hash (e.g. `1af3e45`), surfaced in-app as `v0.1.0 · 1af3e45` | **Nothing by default** — app changes ship as commits, not tagged releases |
+| **Runtime databases** | Release assets (`app.duckdb.tar.gz`, `songs.parquet.tar.gz`) | A data tag such as `v0.2.0` | The database-only release you see on the Releases page |
+
+**Key points:**
+* The `v0.2.0` release on the Releases page is a **data release** (the corpus databases). It is **not** the application version and rarely changes.
+* **Application updates are plain commits on `main`.** They do not create a GitHub release, so the Releases page will not announce them. To see what changed in the app, use the [commit history](https://github.com/rayone/songwriter/commits/main), not the Releases page.
+* The authoritative "what am I running" answer is the in-app build badge and the `/api/version` endpoint (see [Checking the running version](#checking-the-running-version)). The database tag is separate from the application build and the two move on their own schedules.
+* To find the newest application build: `git -C <install dir> fetch && git -C <install dir> log --oneline origin/main -5`, or open the repo's commit history. The newest commit hash on `main` is the latest build.
+
 ### Requirements
 * **Python:** `>= 3.13`
 * **Dependency Manager:** [`uv`](https://docs.astral.sh/uv/)
@@ -89,7 +104,7 @@ Songwriter uses a layered architecture separating pure core algorithms from data
    ```
 
 2. **Download required runtime corpus data:**
-   All runtime files reside flat inside the `data/` directory (zero subdirectories). Download and extract the two required corpus archives from release [`v0.2.0`](https://github.com/rayone/songwriter/releases/tag/v0.2.0):
+   All runtime files reside flat inside the `data/` directory (zero subdirectories). Download and extract the two required corpus archives from the data release [`v0.2.0`](https://github.com/rayone/songwriter/releases/tag/v0.2.0). This tag versions the **databases only**, not the application code (see [Versioning](#versioning-code-vs-data-read-this-first)):
    ```sh
    mkdir -p data
    curl -fL https://github.com/rayone/songwriter/releases/download/v0.2.0/app.duckdb.tar.gz | tar -xz -C data/
@@ -134,14 +149,19 @@ This reuses `deploy/.env`, pulls the configured branch, syncs dependencies,
 restarts the service, and waits for the health check. The changes must have been
 pushed to the remote repository first. Replace `/opt/songwriter` if installed elsewhere.
 
-**Check the running version:** the header beneath **SONGWRITER** shows the package
-version and the source commit, for example `v0.1.0 · 79688f1`. Click it for the full
+**Check the running version:** <a id="checking-the-running-version"></a>the header beneath **SONGWRITER** shows the package
+version and the source commit, for example `v0.1.0 · 1af3e45`. Click it for the full
 commit, branch, and exact tag at `/api/version` (normal application authentication
 applies). `(modified)` indicates tracked source changes at startup. The commit is
 captured when the server starts, so pulling without restarting does not make the
 old process claim to be running a new build. Installs without Git explicitly show
 `commit unavailable`. The installer also prints the deployed build after a successful
-restart. The database release tag is separate from the application version.
+restart.
+
+The application version shown here (a commit hash) is distinct from the `v0.2.0`
+database release tag on the GitHub Releases page. See
+[Versioning: code vs. data](#versioning-code-vs-data-read-this-first) for why
+application updates do not appear as GitHub releases and how to find the latest build.
 
 ---
 
