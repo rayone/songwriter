@@ -96,7 +96,7 @@ def test_unreadable_critic_reply_is_retried_once_and_never_scored_as_a_pass(
         assert c["passed"] is False
     else:
         assert c["score"] is None
-        assert not any(k in c for k in ("sense", "story", "rhyme_integrity", "vernacular"))
+        assert not any(k in c for k in ("sense", "story", "vernacular", "cliches"))
 
 
 def test_prompts_edited_in_settings_reach_the_writer_and_the_critic(
@@ -146,3 +146,47 @@ def test_rhyme_landings_respect_the_song_register(cowriter: SongwriterCowriter) 
         pytest.skip("corpus has no vulgar landing for 'purr' to filter")
     clean = wb.rhyme_landings(["purr"], per_word=8, exclude_tags=("offensive", "vulgar")).get("purr", [])
     assert clean and not any("pussy" in p for p in clean)
+
+
+def test_auto_llm_engine_fails_a_contracted_rhyme_that_does_not_land(
+    cowriter: SongwriterCowriter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # In Auto LLM mode the engine owns rhyme: a line that does not rhyme with its
+    # partner fails the turn even if the critic passes it, so the model never has
+    # to judge sound. Needs the corpus for phonetics.
+    if cowriter.workbench.db is None:
+        pytest.skip("corpus database not available")
+    drafts = iter([
+        "Line 1: Take my heart\nLine 2: Walking down the street",  # 'street' does not rhyme with 'heart'
+        "Line 1: Take my heart\nLine 2: Break me apart",
+    ])
+    monkeypatch.setattr(cowriter, "_chat",
+                        lambda messages, **kw: '{"passed": true, "summary": "ok", "lines": []}'
+                        if _is_critic(messages) else next(drafts))
+    events = list(cowriter.stream_song_interactive(max_retries=2, **_LOVE))
+
+    first = next(e["validation"] for e in events if e.get("type") == "validation")
+    assert first["passed"] is False
+    assert any("rhyme with Line 1" in i for i in first["issues"])
+    assert [e["line"] for e in events if e.get("type") == "line_accepted"] == ["Take my heart", "Break me apart"]
+
+
+def test_syllable_miss_beyond_tolerance_fails_smaller_miss_is_advisory(
+    cowriter: SongwriterCowriter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Guide is 3-6 syllables/line; tolerance 2 means 1-8 passes, outside fails.
+    # "Take my heart" is 3 (in guide). A 10-syllable line fails the turn; a line
+    # one past the guide is only an advisory, not a failure.
+    from songwriter import settings
+    monkeypatch.setattr(settings, "get", lambda k: 2 if k == "syllable_tolerance" else settings._raw(k) or settings._SPEC[k][1])
+    over = "Line 1: Take my heart\nLine 2: I am running very far away today now"  # ~11 syl, well over 8
+    fixed = "Line 1: Take my heart\nLine 2: Break me apart"
+    drafts = iter([over, fixed])
+    monkeypatch.setattr(cowriter, "_chat",
+                        lambda messages, **kw: '{"passed": true, "summary": "ok", "lines": []}'
+                        if _is_critic(messages) else next(drafts))
+    events = list(cowriter.stream_song_interactive(max_retries=2, **_LOVE))
+    first = next(e["validation"] for e in events if e.get("type") == "validation")
+    assert first["passed"] is False
+    assert any("syllables, aiming" in i for i in first["issues"])
+    assert [e["line"] for e in events if e.get("type") == "line_accepted"] == ["Take my heart", "Break me apart"]

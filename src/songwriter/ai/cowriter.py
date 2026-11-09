@@ -57,10 +57,12 @@ _SYL_SUFFIX_RE = re.compile(
 # One stressed vowel sound may end at most this many lines per section before
 # the writer must move to a new sound (13 of 22 lines on /uː/ is a loop).
 _MAX_SOUND_PER_SECTION = 4
-# Tier 2 critic dimensions. A "fail" on a hard dimension fails the turn whatever
-# the critic's own "passed" flag says; cadence and cliché notes are advisory.
-_CRITIC_HARD_DIMS = ("sense", "story", "rhyme_integrity", "vernacular")
-_CRITIC_DIMS = _CRITIC_HARD_DIMS + ("cadence", "cliches")
+# Tier 2 critic dimensions: the critic judges words, never sound. Rhyme, syllables
+# and the new-sound rule are the engine's job in every mode, so rhyme_integrity and
+# cadence are no longer scored here. A "fail" on a hard dimension fails the turn
+# whatever the critic's own "passed" flag says; cliché notes stay advisory.
+_CRITIC_HARD_DIMS = ("sense", "story", "vernacular")
+_CRITIC_DIMS = _CRITIC_HARD_DIMS + ("cliches",)
 
 
 def _nucleus(ph: Any, word: str) -> str:
@@ -2471,6 +2473,7 @@ Respond with JSON only, no prose, in exactly this shape:
         )
         unseen_min = int(_settings.get("unseen_pair_min_expected"))
         writer_budget = max(120, int(_settings.get("writer_max_tokens")))
+        syl_tol = max(0, int(_settings.get("syllable_tolerance")))
 
         decisions_str = ("\n- Producer Interview Q&A & Creative Guidance:\n" + "\n".join(gen.interview_guide())) if gen.interview_guide() else ""
         vg = self._vocables_for(gen)
@@ -2894,15 +2897,7 @@ Respond with JSON only, no prose, in exactly this shape:
                         if not text.strip():
                             critical_violations.append(f"Line {sp['line']} is empty.")
 
-                        # 2. Word Envelope (in Tier 1 hybrid mode, check ±2 words tolerance)
-                        if is_hybrid_mode:
-                            wl, wh = word_band(sp["min"], sp["max"])
-                            words = text.split()
-                            if len(words) < max(2, wl - 2) or len(words) > (wh + 2):
-                                critical_violations.append(
-                                    f"Line {sp['line']}: {len(words)} words, outside target window ({wl}-{wh} words)."
-                                )
-
+                        # (Length is checked by syllables below, in every mode.)
                         # 3. Trailing vocable tag cleanup & formatting
                         if re.search(r"\([^)]+\)\s+\S+", text):
                             critical_violations.append(
@@ -2929,7 +2924,10 @@ Respond with JSON only, no prose, in exactly this shape:
                                     critical_violations.append(
                                         f"Line {sp['line']} identity-rhymes on '{st.end_word}' with Line {sp['partner']} ('{pw}'); choose a distinct root word."
                                     )
-                                elif not is_hybrid_mode:
+                                # The engine owns rhyme judgement in every mode: a
+                                # contracted rhyme that doesn't land fails the turn
+                                # here, so the critic never has to judge sound.
+                                else:
                                     comp = self.workbench.ph.compare(pw, st.end_word)
                                     if comp and comp.kind not in ('perfect', 'slant', 'family', 'additive', 'subtractive', 'assonance'):
                                         critical_violations.append(f"Line {sp['line']} should rhyme with Line {sp['partner']} ('{pw}'); '{st.end_word}' does not.")
@@ -2942,21 +2940,26 @@ Respond with JSON only, no prose, in exactly this shape:
                             if ew in earlier and not is_chorus:
                                 critical_violations.append(f"Line {sp['line']} reuses the end word '{ew}' already used earlier in the song; end on a fresh word.")
 
-                        # In Auto Songwriter (full rules mode): run additional scansion, fertility, and cliche checks
-                        if not is_hybrid_mode:
-                            syl_too_short = st.syllables < (sp["min"] - 1)
-                            syl_too_long = st.syllables > (sp["max"] + 1)
-                            if st.syllables and (syl_too_short or syl_too_long):
+                        # Sound the engine owns in every mode: syllable fit and the
+                        # new-sound rule. A miss beyond the tolerance fails the turn;
+                        # a smaller one is an advisory the critic sees, not a fail.
+                        if st.syllables:
+                            if st.syllables < (sp["min"] - syl_tol) or st.syllables > (sp["max"] + syl_tol):
                                 critical_violations.append(f"Line {sp['line']}: {st.syllables} syllables, aiming ~{sp['target']} (guide {sp['min']}-{sp['max']}).")
-                            if sp["line"] <= len(scheme) and scheme[sp["line"] - 1] != "-" and st.end_word and not sp["partner"]:
-                                own = scheme[sp["line"] - 1]
-                                for j in range(max(1, sp["line"] - RHYME_WINDOW), sp["line"]):
-                                    if j - 1 < len(scheme) and scheme[j - 1] not in ("-", own) and j <= len(provisional):
-                                        ow = self.workbench.ca.line_stat(provisional[j - 1]).end_word
-                                        oc = self.workbench.ph.compare(ow, st.end_word) if ow else None
-                                        if oc and oc.kind in ("perfect", "family"):
-                                            critical_violations.append(f"Line {sp['line']} must open a new rhyme sound; '{st.end_word}' rhymes with Line {j} ('{ow}').")
-                                            break
+                            elif st.syllables < sp["min"] or st.syllables > sp["max"]:
+                                advisories.append(f"Line {sp['line']}: {st.syllables} syllables, just outside the guide {sp['min']}-{sp['max']}.")
+                        if sp["line"] <= len(scheme) and scheme[sp["line"] - 1] != "-" and st.end_word and not sp["partner"]:
+                            own = scheme[sp["line"] - 1]
+                            for j in range(max(1, sp["line"] - RHYME_WINDOW), sp["line"]):
+                                if j - 1 < len(scheme) and scheme[j - 1] not in ("-", own) and j <= len(provisional):
+                                    ow = self.workbench.ca.line_stat(provisional[j - 1]).end_word
+                                    oc = self.workbench.ph.compare(ow, st.end_word) if ow else None
+                                    if oc and oc.kind in ("perfect", "family"):
+                                        critical_violations.append(f"Line {sp['line']} must open a new rhyme sound; '{st.end_word}' rhymes with Line {j} ('{ow}').")
+                                        break
+
+                        # Full rules mode only: fertility, stress and cliche advisories.
+                        if not is_hybrid_mode:
                             if st.end_word and not sp["partner"]:
                                 is_anchor = any(gen.rhyme_partner(sec_name, n) == sp["line"] for n in range(sp["line"] + 1, num_lines + 1))
                                 if is_anchor:

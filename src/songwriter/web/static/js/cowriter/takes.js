@@ -58,9 +58,7 @@ function critiquePanelHtml(critique, modelName) {
   const dims = [
     { key: 'sense', label: 'Sense' },
     { key: 'story', label: 'Story & Flow' },
-    { key: 'rhyme_integrity', label: 'Rhyme Integrity' },
-    { key: 'vernacular', label: 'Vernacular' },
-    { key: 'cadence', label: 'Cadence' },
+    { key: 'vernacular', label: 'Vernacular & Genre Fit' },
     { key: 'cliches', label: 'Clichés' }
   ];
   const rows = dims.filter(d => critique[d.key]).map(function(d) {

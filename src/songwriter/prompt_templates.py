@@ -53,35 +53,27 @@ DRAFT LINES TO EVALUATE:
 {lines}
 
 EVALUATION CRITERIA:
+(Judge the words, not the sound. Rhyme, syllables and cadence are checked by the engine before you see the line.)
 1. SENSE (decides the verdict):
 - First restate each line in plain everyday English. If you cannot say what a line means without inventing a backstory for it, it fails.
-- Typical rhyme-hunting failures: spliced idioms ("Tear me up apart" glues "tear me up" onto "tear me apart"); a word that is only there to land the rhyme or fill the length ("Bleed for art", "Softest strike you will prefer", "Yielding to this baby sir"); images that clash with the scene or with each other.
+- Typical failures: spliced idioms ("Tear me up apart" glues "tear me up" onto "tear me apart"); a word that is only there to fill the line ("Bleed for art", "Softest strike you will prefer", "Yielding to this baby sir"); images that clash with the scene or with each other.
 - Fresh imagery passes when its meaning is clear ("My breath hangs silver as the hinges fold"). The simplest natural phrasing usually wins: "Take my heart / Break me apart".
 
 2. STORY & FLOW:
 - Each line follows from the line before it and from the section's scene; the turn adds a new beat instead of circling.
 - Tone and point of view (I / you / he / she) stay consistent with the premise and the lines already written.
 
-3. RHYME INTEGRITY:
-- Follow the RHYME & CADENCE CONTRACT above. An unrhymed setup line or a single-line turn needs no internal couplet rhyme.
-- Judge the core rhyme words only; ignore trailing vocal tags and ad-libs (', ah', '(yeah)').
-- Accept strong slant/near rhymes ('stride' / 'side', 'cold' / 'hold', 'time' / 'shine'). Distinct words ending in the same sounds ('ice' / 'price') are perfect rhymes, never identity rhymes.
-- Reject pairings that do not rhyme when a rhyme is contracted. A rhyme bought with nonsense fails SENSE as well.
-
-4. VERNACULAR VS. BOT TELEGRAPHESE:
-- Genre slang, AAVE, dropped copulas ("we out here") and invariant present tense ("he run the pack") are fine.
+3. VERNACULAR & GENRE FIT:
+- Genre slang, AAVE, dropped copulas ("we out here") and invariant present tense ("he run the pack") are fine when they suit the genre.
 - Reject telegraphese: articles or prepositions deleted to hit a length ("Paws in snow, heavy on pack").
+- Reject words whose register clashes with the genre ("drop-top coupe" in an ethereal ambient track); the words must sound like this genre's own.
 
-5. VOCAL MOUTH-FEEL & CADENCE:
-- The phrasing sits in the pocket at {tempo} without tongue-twisting consonant collisions.
-- A deliberately short line is a dramatic pause, not an empty one.
-
-6. TIRED CLICHÉS:
+4. TIRED CLICHÉS:
 - Flag only stock rhyme pairs and worn-out images ("fire / desire", "heart of gold", "fierce and bold").
 - Everyday idioms and conversational phrases ("take my heart", "fall apart", "right now") are natural speech, not clichés.
 
 FIXES:
-For every line that fails SENSE or STORY, write a replacement that keeps its rhyme contract and roughly its length, uses the simplest natural phrasing, and fits the scene. Leave "fix" empty for lines that pass.
+For every line that fails SENSE or STORY, write a replacement that keeps its place in the rhyme scheme and roughly its length, uses the simplest natural phrasing, and fits the scene. Leave "fix" empty for lines that pass.
 
 OUTPUT INSTRUCTIONS:
 Return one valid JSON object, no markdown, no preamble, exactly this shape:
@@ -91,9 +83,7 @@ Return one valid JSON object, no markdown, no preamble, exactly this shape:
   ],
   "sense": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "story": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
-  "rhyme_integrity": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "vernacular": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
-  "cadence": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "cliches": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "passed": true | false,
   "summary": "1-2 sentences: the single most important change, or why the draft works"

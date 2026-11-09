@@ -1051,6 +1051,11 @@
         <div class="field-hint">Longest reply the line writer may write. A reply cut off at this limit is retried with a bigger budget, so a short limit never loses a section. Only a cap; unused tokens cost nothing.</div>
       </div>
       <div class="field-group w-260">
+        <label class="field-label" for="set-syllable-tolerance">Syllable tolerance</label>
+        <input type="number" id="set-syllable-tolerance" min="0" max="6" step="1">
+        <div class="field-hint">A line more than this many syllables outside its guide fails the turn in every mode; a smaller miss is noted to the critic, not failed. Lower = stricter fit, more retries.</div>
+      </div>
+      <div class="field-group w-260">
         <label class="field-label" for="set-critic-max-tokens">Critic reply budget (tokens)</label>
         <input type="number" id="set-critic-max-tokens" min="200" max="8000" step="100">
         <div class="field-hint">Longest reply the critic may write. Too low and its verdict is cut off, so the turn is judged on engine checks only.</div>
