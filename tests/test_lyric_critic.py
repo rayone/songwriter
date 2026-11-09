@@ -254,3 +254,41 @@ def test_every_attempt_nonrhyming_finalizes_incomplete_not_verified(
     done = next(e for e in events if e.get("type") == "complete")
     assert done["status"] == "incomplete"
     assert saved and saved[-1].status == "incomplete"
+
+
+def test_a_failed_block_makes_the_whole_section_incomplete(
+    cowriter: SongwriterCowriter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A 4-line ABAB section is two blocks: lines 1-2, then 3-4. The first block
+    # passes; the second fails its rhyme on every retry and is kept as the best
+    # failed take. The section must still finalize incomplete -- a later passing
+    # block must not erase the earlier failure. Needs the corpus for phonetics.
+    if cowriter.workbench.db is None:
+        pytest.skip("corpus database not available")
+    four = dict(
+        prompt="love", story="x", model="test-model", section_plan="[Verse 1]",
+        syllable_target="3-6", rhyme_scheme="ABAB", max_sections=1,
+        answers={"section_lines": "4 lines per section", "lines_per_turn": "2 lines per turn"},
+    )
+    # Block 1 (lines 1-2, A/B openers, no rhyme contract between them) passes.
+    # Block 2 (lines 3-4): line 3 must rhyme line 1 ("heart"), line 4 line 2
+    # ("street"); these never do, so every retry fails.
+    def chat(messages, **kw):
+        if _is_critic(messages):
+            return '{"passed": true, "summary": "ok", "lines": []}'
+        c = messages[0]["content"]
+        if "Lines 3-4" in c or "Line 3" in c:
+            return "Line 3: I wander far away\nLine 4: beneath the open sky"  # no rhyme with heart/street
+        return "Line 1: Take my heart\nLine 2: Walking down the street"
+
+    saved: list[object] = []
+    monkeypatch.setattr(cowriter.song_store, "save", lambda gen: saved.append(gen) or gen)
+    monkeypatch.setattr(cowriter, "_chat", chat)
+    events = list(cowriter.stream_song_interactive(max_retries=2, **four))
+
+    vals = [e["validation"]["passed"] for e in events if e.get("type") == "validation"]
+    assert True in vals and False in vals  # block 1 passed, block 2 failed
+    done = next(e for e in events if e.get("type") == "complete")
+    assert done["status"] == "incomplete"
+    assert any(s["reason"] == "did not pass validation" for s in done["incomplete_sections"])
+    assert saved and saved[-1].status == "incomplete"

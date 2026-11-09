@@ -2647,6 +2647,10 @@ Respond with JSON only, no prose, in exactly this shape:
             num_lines = gen.lines_in_section(sec_name)
             scheme = gen.section_scheme(sec_name)
             sec_lines: list[str] = []
+            # AND of every block's kept-pass state: a section is verified only when
+            # each block passed. Declared here (not per block) so an earlier failed
+            # block is not forgotten when a later block passes.
+            section_passed = True
 
             blocks = gen.line_blocks(sec_name)
             for block in blocks:
@@ -3206,6 +3210,9 @@ Respond with JSON only, no prose, in exactly this shape:
                         f"{out_rule}"
                     )
 
+                # Fold this block's kept-pass state into the section. A single failed
+                # block makes the whole section unverified, even if later blocks pass.
+                section_passed = section_passed and accepted_passed
                 for text in accepted_block:
                     all_lines.append(text)
                     sec_lines.append(text)
@@ -3215,12 +3222,12 @@ Respond with JSON only, no prose, in exactly this shape:
                 cached_chorus_lines = list(sec_lines)
 
             # A section is incomplete when it is short of its planned line count OR
-            # when its lines were only accepted as the best failed take (no attempt
-            # passed the engine). Either way the song is finalized as incomplete, so
-            # a persistently non-rhyming or nonsensical draft is never shown as
-            # verified just because it has the right number of lines.
+            # when any block's lines were only accepted as the best failed take (no
+            # attempt passed the engine). Either way the song is finalized as
+            # incomplete, so a persistently non-rhyming or nonsensical draft is never
+            # shown as verified just because it has the right number of lines.
             planned = gen.lines_in_section(sec_name)
-            if not gen.repeat_of(sec_name) and (len(sec_lines) < planned or not accepted_passed):
+            if not gen.repeat_of(sec_name) and (len(sec_lines) < planned or not section_passed):
                 short = len(sec_lines) < planned
                 reason = "short" if short else "did not pass validation"
                 incomplete_sections.append({"name": sec_name, "have": len(sec_lines),
