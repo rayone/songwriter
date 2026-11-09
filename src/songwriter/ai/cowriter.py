@@ -2302,12 +2302,6 @@ Respond with JSON only, no prose, in exactly this shape:
             engine_text = ("\nENGINE FACTS (measured from the song corpus; evidence, not verdicts -- "
                            "a fresh image can be unseen too):\n" + "\n".join(f"• {n}" for n in engine_notes) + "\n")
 
-        line_rows = ",\n    ".join(
-            f'{{"line": {n}, "meaning": "plain-English paraphrase", "makes_sense": true | false, '
-            f'"forced_word": "word only there for rhyme or length, else empty", "fix": "rewritten line, else empty"}}'
-            for n in nums
-        )
-
         return prompt_templates.render("lyric_critic", {
             "title": gen.title,
             "genre": gen.genre,
@@ -2321,7 +2315,6 @@ Respond with JSON only, no prose, in exactly this shape:
             "contract": contract_text,
             "engine_facts": engine_text,
             "lines": lines_text,
-            "line_rows": line_rows,
         })
 
     @staticmethod
@@ -2364,8 +2357,14 @@ Respond with JSON only, no prose, in exactly this shape:
         from songwriter import settings as _settings
         # Too small a budget truncates the JSON, which then counts as unparsed.
         budget = int(_settings.get("critic_max_tokens"))
+        # A separate critic model (blank = the writer's own) keeps the writer from
+        # grading its own work. json_object asks the endpoint to return valid JSON,
+        # cutting the "not valid JSON" retries; endpoints that reject it are handled
+        # by _chat, which drops the hint and retries.
+        critic_model = _settings.get_str("critic_model").strip() or gen.model
         messages = [{"role": "user", "content": prompt}]
-        raw = self._chat(messages, model=gen.model, temperature=0.2, max_tokens=budget).strip()
+        raw = self._chat(messages, model=critic_model, temperature=0.2,
+                         max_tokens=budget, json_object=True).strip()
         critique = self._parse_critique(raw)
         if critique is None:
             raw = self._chat(
@@ -2373,14 +2372,14 @@ Respond with JSON only, no prose, in exactly this shape:
                     {"role": "assistant", "content": raw or "(no reply)"},
                     {"role": "user", "content": "That was not a valid JSON object. Reply with the JSON object only."},
                 ],
-                model=gen.model, temperature=0.0, max_tokens=budget,
+                model=critic_model, temperature=0.0, max_tokens=budget, json_object=True,
             ).strip()
             critique = self._parse_critique(raw)
         if critique is None:
             return {
                 "passed": True, "parsed": False, "score": None, "lines": [],
                 "summary": "Critic reply was not valid JSON; this turn was judged on engine checks only.",
-                "prompt": prompt, "raw_response": raw,
+                "prompt": prompt, "raw_response": raw, "critic_model": critic_model,
             }
 
         rows = [r for r in (critique.get("lines") or []) if isinstance(r, dict)]
@@ -2400,6 +2399,7 @@ Respond with JSON only, no prose, in exactly this shape:
         critique["parsed"] = True
         critique["prompt"] = prompt
         critique["raw_response"] = raw
+        critique["critic_model"] = critic_model
         return critique
 
     def stream_song_interactive(
@@ -3359,6 +3359,7 @@ Respond with JSON only, no prose, in exactly this shape:
         # deadline cuts it off mid-answer.
         timeout: int = 180,
         reasoning_effort: str | None = "low",
+        json_object: bool = False,
         meta: dict[str, Any] | None = None,
     ) -> str:
         """Return the reply text. If ``meta`` is given, it is filled with
@@ -3382,6 +3383,10 @@ Respond with JSON only, no prose, in exactly this shape:
         }
         if reasoning_effort:
             chat_payload["reasoning_effort"] = reasoning_effort
+        if json_object:
+            # Ask the endpoint to return a JSON object. Not every endpoint supports
+            # it; a 400/422 drops the optional hints and retries (see below).
+            chat_payload["response_format"] = {"type": "json_object"}
 
         def _send(payload: dict[str, Any]) -> str:
             return self._post_chat(payload, timeout=timeout, meta=meta)
@@ -3389,12 +3394,12 @@ Respond with JSON only, no prose, in exactly this shape:
         try:
             return _send(chat_payload)
         except urllib.error.HTTPError as err:
-            if "reasoning_effort" in chat_payload and err.code in (400, 422):
-                # Model/proxy does not support reasoning_effort; retry once without it
-                no_re = dict(chat_payload)
-                del no_re["reasoning_effort"]
+            optional = ("reasoning_effort", "response_format")
+            if any(k in chat_payload for k in optional) and err.code in (400, 422):
+                # Endpoint rejected an optional hint; retry once without them.
+                plain = {k: v for k, v in chat_payload.items() if k not in optional}
                 try:
-                    return _send(no_re)
+                    return _send(plain)
                 except Exception:
                     pass
             err_body = ""

@@ -988,6 +988,11 @@
       <select id="set-default-model" class="field-select"><option value="">(use first available)</option></select>
       <div class="field-hint" id="set-default-model-src"></div>
     </div>
+    <div class="field-group mb-12">
+      <label class="field-label" for="set-critic-model">Critic Model (Step 4, optional)</label>
+      <select id="set-critic-model" class="field-select"><option value="">(same as default model)</option></select>
+      <div class="field-hint" id="set-critic-model-src">A different model for the Step 4 lyric critic keeps the writer from grading its own work. Blank uses the default model.</div>
+    </div>
     <div class="flex gap-8 items-center">
       <button type="button" class="btn-secondary w-auto" onclick="testLlmConnection()">Test Connection</button>
       <button type="button" class="btn-primary w-auto" onclick="saveSettings()">Save Settings</button>

@@ -41,7 +41,8 @@ async function loadSettings() {
         + 'Blank keeps it; type a new key to replace, "-" to clear.';
     }
     // Populate the default-model dropdown from the live endpoint.
-    await populateSettingsModels(s['default_model'] && s['default_model'].value);
+    await populateSettingsModels(s['default_model'] && s['default_model'].value,
+                                 s['critic_model'] && s['critic_model'].value);
     await loadPrompts();
   } catch (e) {
     console.warn('Could not load settings:', e);
@@ -55,15 +56,25 @@ function sourceLabel(field) {
   return 'Using built-in default.';
 }
 
-async function populateSettingsModels(selected) {
+async function populateSettingsModels(selected, criticSelected) {
   const sel = el('set-default-model');
   if (!sel) return;
   try {
     const resp = await getJSON('/api/ai/models');
     const models = (resp && resp.models) || [];
-    sel.innerHTML = '<option value="">(use first available)</option>' +
-      models.map(function (m) { return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'; }).join('');
+    // Keep a saved id that an unavailable or stale list omits, so a later Save
+    // does not silently drop it.
+    const withSel = function (v) {
+      return v && !models.includes(v) ? ['<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + ' (saved)</option>'] : [];
+    };
+    const opts = models.map(function (m) { return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'; }).join('');
+    sel.innerHTML = '<option value="">(use first available)</option>' + withSel(selected).join('') + opts;
     if (selected) sel.value = selected;
+    const critic = el('set-critic-model');
+    if (critic) {
+      critic.innerHTML = '<option value="">(same as default model)</option>' + withSel(criticSelected).join('') + opts;
+      if (criticSelected) critic.value = criticSelected;
+    }
     const status = el('settings-llm-status');
     if (status) {
       if (models.length) { status.innerText = models.length + ' models available'; status.className = 'badge badge-success'; }
@@ -92,7 +103,7 @@ async function testLlmConnection() {
         resEl.className = 'status-line c-danger';
       }
     }
-    await populateSettingsModels(val('set-default-model'));
+    await populateSettingsModels(val('set-default-model'), val('set-critic-model'));
     if (typeof loadModels === 'function') loadModels();
   } catch (e) {
     if (resEl) { resEl.innerText = 'Failed — could not reach the server.'; resEl.className = 'status-line c-danger'; }
@@ -103,6 +114,7 @@ async function saveSettings(silent) {
   const body = {
     llm_endpoint: val('set-llm-endpoint'),
     default_model: val('set-default-model'),
+    critic_model: val('set-critic-model') || '',
     default_bpm: parseInt(val('set-default-bpm'), 10) || undefined,
     default_music_key: val('set-default-music-key'),
     default_scale: val('set-default-scale'),

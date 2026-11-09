@@ -128,6 +128,43 @@ def test_prompts_edited_in_settings_reach_the_writer_and_the_critic(
     assert judged and all("Reject any line about the sun." in p for p in judged)
 
 
+def test_critic_prompt_shares_a_static_prefix_across_turns(cowriter: SongwriterCowriter) -> None:
+    # For prompt caching to help, every critic call in a song must share a long
+    # identical opening: the static criteria and JSON schema come before any
+    # per-turn content (TRACK CONTEXT and the draft lines).
+    g = SongGeneration(title="Night Drive", genre="Pop", key="C", scale="major", bpm=100,
+                       brief="a drive at dusk", story="x")
+    p1 = cowriter._build_critique_prompt(["Take my heart", "Break me apart"], g,
+                                         section="Verse 1", line_numbers=[1, 2])
+    p2 = cowriter._build_critique_prompt(["City lights blur by", "I let the night decide"], g,
+                                         section="Verse 2", line_numbers=[3, 4])
+    pre1, pre2 = p1.split("TRACK CONTEXT:")[0], p2.split("TRACK CONTEXT:")[0]
+    assert pre1 == pre2 and len(pre1) > 1000
+    assert "EVALUATION CRITERIA:" in pre1  # the routing marker is in the shared prefix
+
+
+def test_critic_runs_on_the_configured_critic_model(
+    cowriter: SongwriterCowriter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A separate critic model is used for the critic call (not the writer's), and
+    # recorded on the critique so the UI can label the judge.
+    from songwriter import settings
+    monkeypatch.setattr(settings, "get_str",
+                        lambda k: "critic-xl" if k == "critic_model" else (settings._raw(k) or ""))
+    monkeypatch.setattr(settings, "get", lambda k: settings._SPEC[k][1])
+    seen: list[str] = []
+
+    def chat(messages, **kw):
+        seen.append(kw.get("model"))
+        return json.dumps({"passed": True, "summary": "ok", "lines": []})
+
+    monkeypatch.setattr(cowriter, "_chat", chat)
+    c = cowriter._run_llm_critique(["Take my heart", "Break me apart"],
+                                   SongGeneration(model="writer-m"))
+    assert seen == ["critic-xl"]
+    assert c["critic_model"] == "critic-xl"
+
+
 def test_unseen_pairs_flag_spliced_idioms_not_fresh_images(cowriter: SongwriterCowriter) -> None:
     wb = cowriter.workbench
     if wb.db is None:

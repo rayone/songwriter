@@ -42,15 +42,6 @@ _LINE_RULES = (
 # Step 4 critic (Auto LLM mode). Doubled braces are literal JSON braces; the app
 # fills the single-brace placeholders.
 _LYRIC_CRITIC = """You are a hit songwriter and lyric editor reviewing a co-writer's draft before the vocal session. Judge it the way a listener hears it: every line must say something a real person would sing, and the lines must carry the story forward together.
-TRACK CONTEXT:
-• Song Title: "{title}"
-• Genre & Arrangement: {genre} ({key_scale}, {tempo})
-• Reference Feel: {reference}
-• Section: [{section}]
-• Core Story / Theme: {story}
-{scene}{recent_lines}{contract}{engine_facts}
-DRAFT LINES TO EVALUATE:
-{lines}
 
 EVALUATION CRITERIA:
 (Judge the words, not the sound. Rhyme, syllables and cadence are checked by the engine before you see the line.)
@@ -76,10 +67,10 @@ FIXES:
 For every line that fails SENSE or STORY, write a replacement that keeps its place in the rhyme scheme and roughly its length, uses the simplest natural phrasing, and fits the scene. Leave "fix" empty for lines that pass.
 
 OUTPUT INSTRUCTIONS:
-Return one valid JSON object, no markdown, no preamble, exactly this shape:
+Return one valid JSON object, no markdown, no preamble, exactly this shape. The "lines" array has one entry per draft line, in order:
 {{
   "lines": [
-    {line_rows}
+    {{"line": <number>, "meaning": "plain-English paraphrase", "makes_sense": true | false, "forced_word": "word only there for rhyme or length, else empty", "fix": "rewritten line, else empty"}}
   ],
   "sense": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "story": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
@@ -87,7 +78,17 @@ Return one valid JSON object, no markdown, no preamble, exactly this shape:
   "cliches": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "passed": true | false,
   "summary": "1-2 sentences: the single most important change, or why the draft works"
-}}"""
+}}
+
+TRACK CONTEXT:
+• Song Title: "{title}"
+• Genre & Arrangement: {genre} ({key_scale}, {tempo})
+• Reference Feel: {reference}
+• Section: [{section}]
+• Core Story / Theme: {story}
+{scene}{recent_lines}{contract}{engine_facts}
+DRAFT LINES TO EVALUATE (one "lines" entry each, in this order):
+{lines}"""
 
 # key -> (friendly_name, template_text, [param names], description)
 _DEFAULTS: dict[str, tuple[str, str, list[str], str]] = {
@@ -192,7 +193,7 @@ _DEFAULTS: dict[str, tuple[str, str, list[str], str]] = {
         "Lyric Critic (Step 4 line review)",
         _LYRIC_CRITIC,
         ["title", "genre", "key_scale", "tempo", "reference", "section", "story",
-         "scene", "recent_lines", "contract", "engine_facts", "lines", "line_rows"],
+         "scene", "recent_lines", "contract", "engine_facts", "lines"],
         "Reviews each Step 4 draft in Auto LLM mode. Its JSON verdict decides whether the "
         "turn passes and its rewrites go into the retry, so keep the JSON keys. Literal "
         "braces must be doubled: {{ }}.",

@@ -255,6 +255,7 @@ class SettingsUpdate(BaseModel):
     llm_endpoint: str | None = Field(default=None, description="LLM API base URL")
     llm_api_key: str | None = Field(default=None, description="LLM API key (write-only; blank keeps existing, '-' clears)")
     default_model: str | None = Field(default=None, description="Default model id")
+    critic_model: str | None = Field(default=None, description="Model for the Step 4 lyric critic; blank uses the default model")
     default_bpm: int | None = Field(default=None, description="Default BPM")
     default_music_key: str | None = Field(default=None, description="Default musical key")
     default_scale: str | None = Field(default=None, description="Default scale (major/minor)")

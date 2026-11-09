@@ -45,6 +45,9 @@ _SPEC: dict[str, tuple[str, Any]] = {
     # Lines more than this many syllables outside the guide fail the turn in every
     # mode; smaller misses are reported to the critic, not failed.
     "syllable_tolerance": ("SONGWRITER_SYLLABLE_TOLERANCE", 2),
+    # Blank = judge with the writer's model. Set a different model id to stop the
+    # writer grading its own work (the endpoint must list it).
+    "critic_model": ("SONGWRITER_CRITIC_MODEL", ""),
     "critic_max_tokens": ("SONGWRITER_CRITIC_MAX_TOKENS", 900),
     "unseen_pair_min_expected": ("SONGWRITER_UNSEEN_PAIR_MIN_EXPECTED", 50),
     "rhyme_landing_min_songs": ("SONGWRITER_RHYME_LANDING_MIN_SONGS", 5),

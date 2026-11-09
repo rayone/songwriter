@@ -87,7 +87,7 @@ function critiquePanelHtml(critique, modelName) {
     </details>` : '';
 
   return `
-    <div class="turn-panel-title">${escapeHtml(modelLabel(modelName))} Critique <span class="turn-verdict">${verdict}</span></div>
+    <div class="turn-panel-title">${escapeHtml(modelLabel(critique.critic_model || modelName))} Critique <span class="turn-verdict">${verdict}</span></div>
     ${summary}
     ${lineRows ? `<div class="mt-3">${lineRows}</div>` : ''}
     <div class="mt-3">${rows}</div>
