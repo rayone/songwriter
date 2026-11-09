@@ -2402,6 +2402,7 @@ Respond with JSON only, no prose, in exactly this shape:
         turns: list[dict[str, Any]] = []
         all_lines: list[str] = []
         sections_out: list[dict[str, Any]] = []
+        incomplete_sections: list[dict[str, Any]] = []  # sections short of their planned line count
         turn_id = 1
         cached_chorus_lines: list[str] | None = None
         live_avg_syl = float(gen.syllable_target)
@@ -3149,6 +3150,14 @@ Respond with JSON only, no prose, in exactly this shape:
             if is_chorus and not cached_chorus_lines:
                 cached_chorus_lines = list(sec_lines)
 
+            # A section that never reached its planned line count (e.g. every
+            # retry's reply was cut off) is recorded as incomplete, so the song is
+            # finalized as such instead of silently shipping with a short section.
+            planned = gen.lines_in_section(sec_name)
+            if not gen.repeat_of(sec_name) and len(sec_lines) < planned:
+                incomplete_sections.append({"name": sec_name, "have": len(sec_lines), "planned": planned})
+                yield {"type": "section_incomplete", "section": sec_name,
+                       "have": len(sec_lines), "planned": planned}
             sections_out.append({
                 "name": sec_name,
                 "kind": sec_kind,
@@ -3189,7 +3198,10 @@ Respond with JSON only, no prose, in exactly this shape:
             "ttr_vocabulary_diversity": live_ttr,
             "total_lines": len(all_lines),
         }
-        gen.status = "finalized"
+        # Only a song whose every planned section reached its line count is
+        # "finalized"; otherwise it is "incomplete" so the record and the UI show
+        # the gap instead of presenting a short song as finished.
+        gen.status = "incomplete" if incomplete_sections else "finalized"
         self.song_store.save(gen)
 
         ep = gen.engine_prompts
@@ -3199,6 +3211,8 @@ Respond with JSON only, no prose, in exactly this shape:
             "revision": gen.revision,
             "lyrics": clean_lyrics,
             "sections": sections_out,
+            "incomplete_sections": incomplete_sections,
+            "status": gen.status,
             "turns": turns,
             "abc_score": gen.abc_score,
             "analytics": gen.analytics,

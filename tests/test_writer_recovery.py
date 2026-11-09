@@ -131,3 +131,30 @@ def test_all_empty_replies_flag_the_section_cut_off(
     assert resp["cut_off"] is True
     val = next(e["validation"] for e in events if e.get("type") == "validation")
     assert any("cut off at the token limit" in i for i in val["issues"])
+
+
+def test_exhausted_cut_off_finalizes_the_song_as_incomplete(
+    cowriter: SongwriterCowriter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every writer reply is cut off on every attempt, so the section never fills.
+    # The song must finalize as "incomplete" with the short section named, in both
+    # the stream's complete event and the saved record -- never as a finished song.
+    def chat(messages, **kw):  # noqa: ANN001
+        if _is_critic(messages):
+            return '{"passed": true, "summary": "ok", "lines": []}'
+        if (meta := kw.get("meta")) is not None:
+            meta["finish_reason"] = "length"
+            meta["usage"] = {}
+        return "Line"
+
+    saved: list[object] = []
+    monkeypatch.setattr(cowriter, "_chat", chat)
+    monkeypatch.setattr(cowriter.song_store, "save", lambda gen: saved.append(gen) or gen)
+    events = list(cowriter.stream_song_interactive(max_retries=2, **_LOVE))
+
+    incomplete = [e for e in events if e.get("type") == "section_incomplete"]
+    assert incomplete and incomplete[0]["have"] < incomplete[0]["planned"]
+    done = next(e for e in events if e.get("type") == "complete")
+    assert done["status"] == "incomplete"
+    assert done["incomplete_sections"] and done["incomplete_sections"][0]["name"] == "Verse 1"
+    assert saved and saved[-1].status == "incomplete"

@@ -338,7 +338,12 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
     if (!isCurrentTakeRun(take)) return;
     if (!completeData) throw new Error('The stream ended before the song was complete. Please re-draft this take.');
     renderTake(completeData, takeId);
-    takeStatus(take, 'Song complete! Verified against all scansion rules.', 'green');
+    if (completeData.status === 'incomplete') {
+      const names = (completeData.incomplete_sections || []).map(s => `${s.name} (${s.have}/${s.planned})`).join(', ');
+      takeStatus(take, 'Song incomplete — short section(s): ' + (names || 'see panel') + '. Re-draft to fill them.', 'yellow');
+    } else {
+      takeStatus(take, 'Song complete! Verified against all scansion rules.', 'green');
+    }
   } catch (err) {
     if (!isCurrentTakeRun(take) || (err && err.name === 'AbortError')) return;
     take.status = 'failed';
@@ -839,6 +844,8 @@ function renderTake(data, takeId) {
     model_used: data.model_used || (data.generation && data.generation.model) || '',
     model: take.model || data.model_used || (data.generation && data.generation.model) || '',
     songId: data.song_id || null,
+    songStatus: data.status || 'finalized',
+    incompleteSections: data.incomplete_sections || [],
     generation: data.generation || null
   });
   // A finished draft is already saved; re-drafting must add revisions to the
@@ -865,7 +872,7 @@ async function saveCurrentTake() {
   try {
     const res = await postJSON('/api/crafted_songs', {
       id: currentTake.songId,
-      status: 'finalized',
+      status: currentTake.songStatus || 'finalized',
       generation: generation
     });
     currentTake.songId = res.song_id;
