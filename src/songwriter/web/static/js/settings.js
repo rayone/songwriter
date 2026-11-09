@@ -20,6 +20,9 @@ async function loadSettings() {
     put('set-default-vocal', 'default_vocal');
     put('set-cliche-min-freq', 'cliche_min_freq');
     put('set-idiom-allowlist', 'idiom_allowlist');
+    put('set-critic-max-tokens', 'critic_max_tokens');
+    put('set-unseen-pair-min-expected', 'unseen_pair_min_expected');
+    put('set-rhyme-landing-min-songs', 'rhyme_landing_min_songs');
     // Checkboxes: value is a truthy string.
     const truthy = function (v) { return String(v).toLowerCase() === 'true' || v === true || String(v) === '1'; };
     if (s['cliche_check_enabled'] && el('set-cliche-check-enabled')) el('set-cliche-check-enabled').checked = truthy(s['cliche_check_enabled'].value);
@@ -105,6 +108,9 @@ async function saveSettings(silent) {
     cliche_check_enabled: (el('set-cliche-check-enabled') && el('set-cliche-check-enabled').checked) ? 'true' : 'false',
     melodic_delta_enabled: (el('set-melodic-delta-enabled') && el('set-melodic-delta-enabled').checked) ? 'true' : 'false',
     idiom_allowlist: (el('set-idiom-allowlist') && el('set-idiom-allowlist').value) || '',
+    critic_max_tokens: parseInt(val('set-critic-max-tokens'), 10) || undefined,
+    unseen_pair_min_expected: parseInt(val('set-unseen-pair-min-expected'), 10) || undefined,
+    rhyme_landing_min_songs: parseInt(val('set-rhyme-landing-min-songs'), 10) || undefined,
   };
   const keyVal = val('set-llm-api-key');
   if (keyVal) body.llm_api_key = keyVal; // blank keeps existing

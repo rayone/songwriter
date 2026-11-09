@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from songwriter import prompt_templates
 from songwriter.ai.cowriter import SongwriterCowriter
 from songwriter.ai.generation import SongGeneration
 
@@ -96,6 +97,35 @@ def test_unreadable_critic_reply_is_retried_once_and_never_scored_as_a_pass(
     else:
         assert c["score"] is None
         assert not any(k in c for k in ("sense", "story", "rhyme_integrity", "vernacular"))
+
+
+def test_prompts_edited_in_settings_reach_the_writer_and_the_critic(
+    cowriter: SongwriterCowriter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rules = prompt_templates.get_template("line_rules") + "\n- Every line mentions the moon."
+    critic = prompt_templates.get_template("lyric_critic").replace(
+        "EVALUATION CRITERIA:", "EVALUATION CRITERIA:\n0. Reject any line about the sun.")
+    sent: list[str] = []
+
+    def chat(messages: list[dict[str, str]], **kw: object) -> str:
+        sent.append(messages[0]["content"])
+        if _is_critic(messages):
+            return json.dumps({"passed": True, "summary": "Clean.", "lines": []})
+        return "Line 1: Take my heart\nLine 2: Break me apart"
+
+    monkeypatch.setattr(cowriter, "_chat", chat)
+    prompt_templates.save_version("line_rules", rules)
+    prompt_templates.save_version("lyric_critic", critic)
+    try:
+        list(cowriter.stream_song_interactive(max_retries=1, **_LOVE))
+    finally:
+        prompt_templates.reset_default("line_rules")
+        prompt_templates.reset_default("lyric_critic")
+
+    writer = [p for p in sent if "EVALUATION CRITERIA:" not in p]
+    judged = [p for p in sent if "EVALUATION CRITERIA:" in p]
+    assert writer and all("Every line mentions the moon." in p for p in writer)
+    assert judged and all("Reject any line about the sun." in p for p in judged)
 
 
 def test_unseen_pairs_flag_spliced_idioms_not_fresh_images(cowriter: SongwriterCowriter) -> None:

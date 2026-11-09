@@ -263,6 +263,9 @@ class SettingsUpdate(BaseModel):
     cliche_check_enabled: str | None = Field(default=None, description="Enable cliche check (true/false)")
     melodic_delta_enabled: str | None = Field(default=None, description="Enable melodic-delta check (true/false)")
     idiom_allowlist: str | None = Field(default=None, description="Newline-separated idioms never flagged as cliche")
+    critic_max_tokens: int | None = Field(default=None, description="Longest reply the Step 4 lyric critic may write (tokens)")
+    unseen_pair_min_expected: int | None = Field(default=None, description="Report a never-sung word pair to the critic when chance predicts it at least this often")
+    rhyme_landing_min_songs: int | None = Field(default=None, description="A rhyme phrase example must appear in at least this many songs")
 
 
 @app.get("/api/settings", summary="Read Runtime Settings")
@@ -294,7 +297,7 @@ def put_settings(body: SettingsUpdate) -> dict[str, Any]:
 
 
 class PromptSave(BaseModel):
-    key: str = Field(..., description="Prompt key (storyline, interview_questions, song_context, line_writing, whole_song)")
+    key: str = Field(..., description="Prompt key (storyline, interview_questions, song_context, line_writing, whole_song, line_rules, lyric_critic)")
     template: str = Field(..., description="Prompt text with {placeholder} params")
 
 

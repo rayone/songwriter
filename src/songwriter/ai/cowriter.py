@@ -2219,7 +2219,8 @@ Respond with JSON only, no prose, in exactly this shape:
         engine_notes: list[str] | None = None,
         line_numbers: list[int] | None = None,
     ) -> str:
-        """Tier 2 critique prompt: the LLM judge reads the turn the way a listener hears it.
+        """Tier 2 critique prompt, rendered from the "lyric_critic" template
+        (Settings -> LLM Prompts): the LLM judge reads the turn the way a listener hears it.
 
         The critic must paraphrase every line before scoring it, so a line it cannot
         restate in plain English (rhyme-forced splices like "Tear me up apart") fails
@@ -2257,63 +2258,21 @@ Respond with JSON only, no prose, in exactly this shape:
             for n in nums
         )
 
-        return f"""You are a hit songwriter and lyric editor reviewing a co-writer's draft before the vocal session. Judge it the way a listener hears it: every line must say something a real person would sing, and the lines must carry the story forward together.
-TRACK CONTEXT:
-• Song Title: "{gen.title}"
-• Genre & Arrangement: {gen.genre} ({key_scale}, {bpm_text})
-• Reference Feel: {ref_label}
-• Section: [{section or "Couplet"}]
-• Core Story / Theme: {gen.brief or gen.story or "Grounded storytelling"}
-{scene_text}{anchor_text}{contract_text}{engine_text}
-DRAFT LINES TO EVALUATE:
-{lines_text}
-
-EVALUATION CRITERIA:
-1. SENSE (decides the verdict):
-- First restate each line in plain everyday English. If you cannot say what a line means without inventing a backstory for it, it fails.
-- Typical rhyme-hunting failures: spliced idioms ("Tear me up apart" glues "tear me up" onto "tear me apart"); a word that is only there to land the rhyme or fill the length ("Bleed for art", "Softest strike you will prefer", "Yielding to this baby sir"); images that clash with the scene or with each other.
-- Fresh imagery passes when its meaning is clear ("My breath hangs silver as the hinges fold"). The simplest natural phrasing usually wins: "Take my heart / Break me apart".
-
-2. STORY & FLOW:
-- Each line follows from the line before it and from the section's scene; the turn adds a new beat instead of circling.
-- Tone and point of view (I / you / he / she) stay consistent with the premise and the lines already written.
-
-3. RHYME INTEGRITY:
-- Follow the RHYME & CADENCE CONTRACT above. An unrhymed setup line or a single-line turn needs no internal couplet rhyme.
-- Judge the core rhyme words only; ignore trailing vocal tags and ad-libs (', ah', '(yeah)').
-- Accept strong slant/near rhymes ('stride' / 'side', 'cold' / 'hold', 'time' / 'shine'). Distinct words ending in the same sounds ('ice' / 'price') are perfect rhymes, never identity rhymes.
-- Reject pairings that do not rhyme when a rhyme is contracted. A rhyme bought with nonsense fails SENSE as well.
-
-4. VERNACULAR VS. BOT TELEGRAPHESE:
-- Genre slang, AAVE, dropped copulas ("we out here") and invariant present tense ("he run the pack") are fine.
-- Reject telegraphese: articles or prepositions deleted to hit a length ("Paws in snow, heavy on pack").
-
-5. VOCAL MOUTH-FEEL & CADENCE:
-- The phrasing sits in the pocket at {bpm_text} without tongue-twisting consonant collisions.
-- A deliberately short line is a dramatic pause, not an empty one.
-
-6. TIRED CLICHÉS:
-- Flag only stock rhyme pairs and worn-out images ("fire / desire", "heart of gold", "fierce and bold").
-- Everyday idioms and conversational phrases ("take my heart", "fall apart", "right now") are natural speech, not clichés.
-
-FIXES:
-For every line that fails SENSE or STORY, write a replacement that keeps its rhyme contract and roughly its length, uses the simplest natural phrasing, and fits the scene. Leave "fix" empty for lines that pass.
-
-OUTPUT INSTRUCTIONS:
-Return one valid JSON object, no markdown, no preamble, exactly this shape:
-{{
-  "lines": [
-    {line_rows}
-  ],
-  "sense": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
-  "story": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
-  "rhyme_integrity": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
-  "vernacular": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
-  "cadence": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
-  "cliches": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
-  "passed": true | false,
-  "summary": "1-2 sentences: the single most important change, or why the draft works"
-}}"""
+        return prompt_templates.render("lyric_critic", {
+            "title": gen.title,
+            "genre": gen.genre,
+            "key_scale": key_scale,
+            "tempo": bpm_text,
+            "reference": ref_label,
+            "section": section or "Couplet",
+            "story": gen.brief or gen.story or "Grounded storytelling",
+            "scene": scene_text,
+            "recent_lines": anchor_text,
+            "contract": contract_text,
+            "engine_facts": engine_text,
+            "lines": lines_text,
+            "line_rows": line_rows,
+        })
 
     @staticmethod
     def _parse_critique(raw: str) -> dict[str, Any] | None:
@@ -2352,8 +2311,11 @@ Return one valid JSON object, no markdown, no preamble, exactly this shape:
             anchor_lines=anchor_lines, meter_notes=meter_notes, scene=scene,
             engine_notes=engine_notes, line_numbers=line_numbers,
         )
+        from songwriter import settings as _settings
+        # Too small a budget truncates the JSON, which then counts as unparsed.
+        budget = int(_settings.get("critic_max_tokens"))
         messages = [{"role": "user", "content": prompt}]
-        raw = self._chat(messages, model=gen.model, temperature=0.2, max_tokens=900).strip()
+        raw = self._chat(messages, model=gen.model, temperature=0.2, max_tokens=budget).strip()
         critique = self._parse_critique(raw)
         if critique is None:
             raw = self._chat(
@@ -2361,7 +2323,7 @@ Return one valid JSON object, no markdown, no preamble, exactly this shape:
                     {"role": "assistant", "content": raw or "(no reply)"},
                     {"role": "user", "content": "That was not a valid JSON object. Reply with the JSON object only."},
                 ],
-                model=gen.model, temperature=0.0, max_tokens=900,
+                model=gen.model, temperature=0.0, max_tokens=budget,
             ).strip()
             critique = self._parse_critique(raw)
         if critique is None:
@@ -2506,6 +2468,7 @@ Return one valid JSON object, no markdown, no preamble, exactly this shape:
         idiom_allow = frozenset(
             p.strip().lower() for p in _settings.get_str("idiom_allowlist").splitlines() if p.strip()
         )
+        unseen_min = int(_settings.get("unseen_pair_min_expected"))
 
         decisions_str = ("\n- Producer Interview Q&A & Creative Guidance:\n" + "\n".join(gen.interview_guide())) if gen.interview_guide() else ""
         vg = self._vocables_for(gen)
@@ -3017,7 +2980,7 @@ Return one valid JSON object, no markdown, no preamble, exactly this shape:
                                     comp = self.workbench.ph.compare(pw, st_c.end_word)
                                     if comp:
                                         note += f"; rhyme with '{pw}' measures as {comp.kind}"
-                                unseen = self.workbench.unseen_pairs(text)
+                                unseen = self.workbench.unseen_pairs(text, min_expected=unseen_min)
                                 if unseen:
                                     note += ("; common words that no song in the corpus puts side by side: "
                                              + ", ".join(f"'{u}'" for u in unseen))

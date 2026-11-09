@@ -193,6 +193,12 @@ All runtime settings are configured via environment variables in `src/songwriter
 | `SONGWRITER_DUCKDB_THREADS` | *(empty)* | Cap on DuckDB query execution threads (empty = DuckDB default). |
 | `SONGWRITER_DUCKDB_MEMORY_LIMIT`| *(empty)* | Cap on DuckDB RAM usage (e.g. `512MB` or `2GB`). |
 
+The **Settings** tab overrides these at runtime, saved to `workbench.duckdb` and applied
+without a restart: LLM backend, generation defaults, validation rules (including the
+Step 4 lyric critic's reply budget, its unusual word-pair threshold, and the minimum
+songs for rhyme phrase examples), and every LLM prompt, including **Writing Rules** and
+**Lyric Critic**, with version history and Reset to Default.
+
 ---
 
 ## 6. Technical Review & Invariants

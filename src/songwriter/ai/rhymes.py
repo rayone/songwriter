@@ -16,6 +16,7 @@ import re
 import threading
 from typing import Any
 
+from songwriter import settings
 from songwriter.craft.stats import TRAFFIC_DIRECTOR_WORDS
 
 from songwriter.ai.generation import SongGeneration
@@ -105,8 +106,10 @@ class RhymeService:
         return high_freq
     def landings(self, words: list[str], gen: SongGeneration) -> dict[str, list[str]]:
         """How real songs land each rhyme word ('apart' -> 'fall apart'), limited
-        to phrases the song's register allows."""
-        return self._wb.rhyme_landings(words, exclude_tags=self._excluded_tags(gen))
+        to phrases the song's register allows and sung in at least the Settings
+        minimum number of songs."""
+        return self._wb.rhyme_landings(words, exclude_tags=self._excluded_tags(gen),
+                                       min_songs=int(settings.get("rhyme_landing_min_songs")))
 
     @staticmethod
     def _excluded_tags(gen: SongGeneration) -> tuple[str, ...]:

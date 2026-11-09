@@ -39,6 +39,66 @@ _LINE_RULES = (
     "- Continuity: Each line continues the narrative scene of the line before it."
 )
 
+# Step 4 critic (Auto LLM mode). Doubled braces are literal JSON braces; the app
+# fills the single-brace placeholders.
+_LYRIC_CRITIC = """You are a hit songwriter and lyric editor reviewing a co-writer's draft before the vocal session. Judge it the way a listener hears it: every line must say something a real person would sing, and the lines must carry the story forward together.
+TRACK CONTEXT:
+• Song Title: "{title}"
+• Genre & Arrangement: {genre} ({key_scale}, {tempo})
+• Reference Feel: {reference}
+• Section: [{section}]
+• Core Story / Theme: {story}
+{scene}{recent_lines}{contract}{engine_facts}
+DRAFT LINES TO EVALUATE:
+{lines}
+
+EVALUATION CRITERIA:
+1. SENSE (decides the verdict):
+- First restate each line in plain everyday English. If you cannot say what a line means without inventing a backstory for it, it fails.
+- Typical rhyme-hunting failures: spliced idioms ("Tear me up apart" glues "tear me up" onto "tear me apart"); a word that is only there to land the rhyme or fill the length ("Bleed for art", "Softest strike you will prefer", "Yielding to this baby sir"); images that clash with the scene or with each other.
+- Fresh imagery passes when its meaning is clear ("My breath hangs silver as the hinges fold"). The simplest natural phrasing usually wins: "Take my heart / Break me apart".
+
+2. STORY & FLOW:
+- Each line follows from the line before it and from the section's scene; the turn adds a new beat instead of circling.
+- Tone and point of view (I / you / he / she) stay consistent with the premise and the lines already written.
+
+3. RHYME INTEGRITY:
+- Follow the RHYME & CADENCE CONTRACT above. An unrhymed setup line or a single-line turn needs no internal couplet rhyme.
+- Judge the core rhyme words only; ignore trailing vocal tags and ad-libs (', ah', '(yeah)').
+- Accept strong slant/near rhymes ('stride' / 'side', 'cold' / 'hold', 'time' / 'shine'). Distinct words ending in the same sounds ('ice' / 'price') are perfect rhymes, never identity rhymes.
+- Reject pairings that do not rhyme when a rhyme is contracted. A rhyme bought with nonsense fails SENSE as well.
+
+4. VERNACULAR VS. BOT TELEGRAPHESE:
+- Genre slang, AAVE, dropped copulas ("we out here") and invariant present tense ("he run the pack") are fine.
+- Reject telegraphese: articles or prepositions deleted to hit a length ("Paws in snow, heavy on pack").
+
+5. VOCAL MOUTH-FEEL & CADENCE:
+- The phrasing sits in the pocket at {tempo} without tongue-twisting consonant collisions.
+- A deliberately short line is a dramatic pause, not an empty one.
+
+6. TIRED CLICHÉS:
+- Flag only stock rhyme pairs and worn-out images ("fire / desire", "heart of gold", "fierce and bold").
+- Everyday idioms and conversational phrases ("take my heart", "fall apart", "right now") are natural speech, not clichés.
+
+FIXES:
+For every line that fails SENSE or STORY, write a replacement that keeps its rhyme contract and roughly its length, uses the simplest natural phrasing, and fits the scene. Leave "fix" empty for lines that pass.
+
+OUTPUT INSTRUCTIONS:
+Return one valid JSON object, no markdown, no preamble, exactly this shape:
+{{
+  "lines": [
+    {line_rows}
+  ],
+  "sense": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
+  "story": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
+  "rhyme_integrity": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
+  "vernacular": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
+  "cadence": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
+  "cliches": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
+  "passed": true | false,
+  "summary": "1-2 sentences: the single most important change, or why the draft works"
+}}"""
+
 # key -> (friendly_name, template_text, [param names], description)
 _DEFAULTS: dict[str, tuple[str, str, list[str], str]] = {
     "storyline": (
@@ -130,6 +190,22 @@ _DEFAULTS: dict[str, tuple[str, str, list[str], str]] = {
         "  {output_rule}",
         ["context", "output_rule"],
         "Writes a whole lyric in a single call (used when not drafting section by section).",
+    ),
+    "line_rules": (
+        "Writing Rules (sent with every lyric line)",
+        _LINE_RULES,
+        [],
+        "Craft rules placed right above every Step 4 writing task and in the copy-paste "
+        "instructions. Edit them to change what each line is told to do.",
+    ),
+    "lyric_critic": (
+        "Lyric Critic (Step 4 line review)",
+        _LYRIC_CRITIC,
+        ["title", "genre", "key_scale", "tempo", "reference", "section", "story",
+         "scene", "recent_lines", "contract", "engine_facts", "lines", "line_rows"],
+        "Reviews each Step 4 draft in Auto LLM mode. Its JSON verdict decides whether the "
+        "turn passes and its rewrites go into the retry, so keep the JSON keys. Literal "
+        "braces must be doubled: {{ }}.",
     ),
 }
 
@@ -263,12 +339,12 @@ def list_prompts() -> list[dict[str, Any]]:
 
 
 def line_rules_text() -> str:
-    """The folded line-writing guidance as plain prose (no attributions).
+    """The active "Writing Rules" prompt (Settings -> LLM Prompts).
 
-    Used by prompt builders that assemble their text directly rather than via a
-    stored template, so the same guidance appears everywhere.
+    Inserted by the prompt builders that assemble their text directly: the Step 4
+    line and turn prompts and the copy-paste instructions.
     """
-    return _LINE_RULES
+    return get_template("line_rules")
 
 
 def save_version(key: str, template: str) -> int:
