@@ -57,6 +57,10 @@ _SYL_SUFFIX_RE = re.compile(
 # One stressed vowel sound may end at most this many lines per section before
 # the writer must move to a new sound (13 of 22 lines on /uː/ is a loop).
 _MAX_SOUND_PER_SECTION = 4
+# Tier 2 critic dimensions. A "fail" on a hard dimension fails the turn whatever
+# the critic's own "passed" flag says; cadence and cliché notes are advisory.
+_CRITIC_HARD_DIMS = ("sense", "story", "rhyme_integrity", "vernacular")
+_CRITIC_DIMS = _CRITIC_HARD_DIMS + ("cadence", "cliches")
 
 
 def _nucleus(ph: Any, word: str) -> str:
@@ -2202,6 +2206,7 @@ Respond with JSON only, no prose, in exactly this shape:
             if len(out) >= count:
                 break
         return out
+
     def _build_critique_prompt(
         self,
         lines: list[str],
@@ -2210,67 +2215,117 @@ Respond with JSON only, no prose, in exactly this shape:
         rhyme_contract: str = "",
         anchor_lines: list[str] | None = None,
         meter_notes: str = "",
+        scene: str = "",
+        engine_notes: list[str] | None = None,
+        line_numbers: list[int] | None = None,
     ) -> str:
-        """Construct the contextualized Tier 2 Critique Prompt for the LLM judge."""
-        lines_text = "\n".join(f"Line {idx + 1}: {line}" for idx, line in enumerate(lines))
+        """Tier 2 critique prompt: the LLM judge reads the turn the way a listener hears it.
+
+        The critic must paraphrase every line before scoring it, so a line it cannot
+        restate in plain English (rhyme-forced splices like "Tear me up apart") fails
+        on sense, and every failing line comes back with a rewrite for the retry.
+        Engine facts are handed over as evidence so the critic never guesses at usage.
+        """
+        nums = line_numbers if line_numbers and len(line_numbers) == len(lines) else list(range(1, len(lines) + 1))
+        lines_text = "\n".join(f"Line {n}: {line}" for n, line in zip(nums, lines))
         ref_title = (gen.reference_song or {}).get("title") or "Contemporary production"
         ref_artist = (gen.reference_song or {}).get("artist") or ""
         ref_label = f"\"{ref_title}\"" + (f" by {ref_artist}" if ref_artist else "")
         bpm_text = f"{gen.bpm} BPM" if gen.bpm else "Standard tempo"
         key_scale = f"{gen.key} {gen.scale}" if (gen.key and gen.scale) else "Natural groove"
 
+        scene_text = f"• This Section's Scene: {scene.strip()}\n" if scene and scene.strip() else ""
         anchor_text = ""
         if anchor_lines:
-            anchor_text = "\nPRECEDING ANCHOR LINES FROM THIS SECTION:\n" + "\n".join(f"• {a}" for a in anchor_lines) + "\n"
+            anchor_text = ("\nLINES ALREADY WRITTEN JUST BEFORE THIS DRAFT (it continues from these):\n"
+                           + "\n".join(f"• {a}" for a in anchor_lines) + "\n")
 
         contract_text = ""
         if rhyme_contract:
             contract_text = f"\nRHYME & CADENCE CONTRACT FOR THIS SPECIFIC TURN:\n{rhyme_contract}\n"
-
         if meter_notes:
             contract_text += f"ARRANGEMENT / METER NOTES:\n{meter_notes}\n"
 
-        return f"""You are an elite music producer and vocal coach evaluating a drafted turn for a recording session.
+        engine_text = ""
+        if engine_notes:
+            engine_text = ("\nENGINE FACTS (measured from the song corpus; evidence, not verdicts -- "
+                           "a fresh image can be unseen too):\n" + "\n".join(f"• {n}" for n in engine_notes) + "\n")
+
+        line_rows = ",\n    ".join(
+            f'{{"line": {n}, "meaning": "plain-English paraphrase", "makes_sense": true | false, '
+            f'"forced_word": "word only there for rhyme or length, else empty", "fix": "rewritten line, else empty"}}'
+            for n in nums
+        )
+
+        return f"""You are a hit songwriter and lyric editor reviewing a co-writer's draft before the vocal session. Judge it the way a listener hears it: every line must say something a real person would sing, and the lines must carry the story forward together.
 TRACK CONTEXT:
 • Song Title: "{gen.title}"
 • Genre & Arrangement: {gen.genre} ({key_scale}, {bpm_text})
 • Reference Feel: {ref_label}
 • Section: [{section or "Couplet"}]
 • Core Story / Theme: {gen.brief or gen.story or "Grounded storytelling"}
-{anchor_text}{contract_text}
+{scene_text}{anchor_text}{contract_text}{engine_text}
 DRAFT LINES TO EVALUATE:
 {lines_text}
 
 EVALUATION CRITERIA:
-1. RHYME INTEGRITY:
-- Follow the RHYME & CADENCE CONTRACT above strictly. If the turn is an unrhymed setup (e.g. Setting up different sounds for a later rhyme) or a single-line turn, DO NOT expect internal couplet rhyming.
-- Evaluate the core rhyming words only. Ignore trailing vocal tags or ad-libs (e.g., ', ah', ', yah', '(yeah)').
-- Accept strong contemporary slant/near rhymes (e.g., 'stride' / 'side', 'cold' / 'hold', 'time' / 'shine', 'lead' / 'sleet').
-- Reject weak or forced pairings that do not rhyme when a rhyme is contracted.
-- Distinct root words ending in identical phonemes (like 'ice' and 'price') are VALID PERFECT RHYMES. Never flag them as identity rhymes.
+1. SENSE (decides the verdict):
+- First restate each line in plain everyday English. If you cannot say what a line means without inventing a backstory for it, it fails.
+- Typical rhyme-hunting failures: spliced idioms ("Tear me up apart" glues "tear me up" onto "tear me apart"); a word that is only there to land the rhyme or fill the length ("Bleed for art", "Softest strike you will prefer", "Yielding to this baby sir"); images that clash with the scene or with each other.
+- Fresh imagery passes when its meaning is clear ("My breath hangs silver as the hinges fold"). The simplest natural phrasing usually wins: "Take my heart / Break me apart".
 
-2. AUTHENTIC VERNACULAR VS. BOT TELEGRAPHESE:
-- Authentic genre slang, AAVE, dropped copulas ("we out here"), and invariant present tense ("he run the pack") are FULLY ACCEPTABLE.
-- Reject "telegraphese": flag lines where necessary articles or prepositions were awkwardly deleted just to hit a length limit (e.g., "Papa scan ridge line wolves cannot destroy" or "Paws in snow, heavy on pack"). The line must roll off the tongue naturally on a microphone.
+2. STORY & FLOW:
+- Each line follows from the line before it and from the section's scene; the turn adds a new beat instead of circling.
+- Tone and point of view (I / you / he / she) stay consistent with the premise and the lines already written.
 
-3. VOCAL MOUTH-FEEL & CADENCE:
-- The phrasing must sit cleanly in the pocket of the tempo ({bpm_text}) without tongue-twisting consonant collisions.
-- If a line is intentionally requested as a short staccato phrase/drop, evaluate its impact as a dramatic pause rather than penalizing it as empty.
+3. RHYME INTEGRITY:
+- Follow the RHYME & CADENCE CONTRACT above. An unrhymed setup line or a single-line turn needs no internal couplet rhyme.
+- Judge the core rhyme words only; ignore trailing vocal tags and ad-libs (', ah', '(yeah)').
+- Accept strong slant/near rhymes ('stride' / 'side', 'cold' / 'hold', 'time' / 'shine'). Distinct words ending in the same sounds ('ice' / 'price') are perfect rhymes, never identity rhymes.
+- Reject pairings that do not rhyme when a rhyme is contracted. A rhyme bought with nonsense fails SENSE as well.
 
-4. TIRED CLICHÉS:
-- Flag actual lyrical clichés (e.g., "heart of gold", "wear the crown of gold", "fierce and bold", "in their time of need").
-- Do NOT flag ordinary conversational connective phrases (e.g., "every single", "comes down", "right now").
+4. VERNACULAR VS. BOT TELEGRAPHESE:
+- Genre slang, AAVE, dropped copulas ("we out here") and invariant present tense ("he run the pack") are fine.
+- Reject telegraphese: articles or prepositions deleted to hit a length ("Paws in snow, heavy on pack").
+
+5. VOCAL MOUTH-FEEL & CADENCE:
+- The phrasing sits in the pocket at {bpm_text} without tongue-twisting consonant collisions.
+- A deliberately short line is a dramatic pause, not an empty one.
+
+6. TIRED CLICHÉS:
+- Flag only stock rhyme pairs and worn-out images ("fire / desire", "heart of gold", "fierce and bold").
+- Everyday idioms and conversational phrases ("take my heart", "fall apart", "right now") are natural speech, not clichés.
+
+FIXES:
+For every line that fails SENSE or STORY, write a replacement that keeps its rhyme contract and roughly its length, uses the simplest natural phrasing, and fits the scene. Leave "fix" empty for lines that pass.
 
 OUTPUT INSTRUCTIONS:
-Return a valid JSON object strictly matching this schema. No markdown formatting outside the JSON, no conversational preamble:
+Return one valid JSON object, no markdown, no preamble, exactly this shape:
 {{
+  "lines": [
+    {line_rows}
+  ],
+  "sense": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
+  "story": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "rhyme_integrity": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "vernacular": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "cadence": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "cliches": {{"score": 1-5, "verdict": "pass" | "fail", "feedback": "concise observation"}},
   "passed": true | false,
-  "summary": "1-2 sentence overall verdict and advice if failed"
+  "summary": "1-2 sentences: the single most important change, or why the draft works"
 }}"""
+
+    @staticmethod
+    def _parse_critique(raw: str) -> dict[str, Any] | None:
+        """The critic's JSON object, or None when the reply holds none."""
+        match = re.search(r"\{.*\}", raw or "", re.DOTALL)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(0))
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
 
     def _run_llm_critique(
         self,
@@ -2280,29 +2335,57 @@ Return a valid JSON object strictly matching this schema. No markdown formatting
         rhyme_contract: str = "",
         anchor_lines: list[str] | None = None,
         meter_notes: str = "",
+        scene: str = "",
+        engine_notes: list[str] | None = None,
+        line_numbers: list[int] | None = None,
     ) -> dict[str, Any]:
-        """Execute Tier 2 Critique LLM and return parsed critique verdict and prompt/response."""
+        """Run the Tier 2 critic and normalise its verdict.
+
+        The verdict is recomputed from its parts: a line the critic could not make
+        sense of, or a failed hard dimension, fails the turn even when the model's
+        own "passed" flag says otherwise. ``score`` (dimension mean minus one per
+        nonsensical line) ranks attempts. An unreadable reply is retried once, then
+        reported as unparsed -- never dressed up as a pass with invented scores.
+        """
         prompt = self._build_critique_prompt(
             lines, gen, section=section, rhyme_contract=rhyme_contract,
-            anchor_lines=anchor_lines, meter_notes=meter_notes,
+            anchor_lines=anchor_lines, meter_notes=meter_notes, scene=scene,
+            engine_notes=engine_notes, line_numbers=line_numbers,
         )
-        raw = self._chat([{"role": "user", "content": prompt}], model=gen.model, temperature=0.3, max_tokens=300).strip()
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        critique: dict[str, Any] = {}
-        if match:
-            try:
-                critique = json.loads(match.group(0))
-            except Exception:
-                pass
-        if not critique or not isinstance(critique, dict):
-            critique = {
-                "passed": True,
-                "summary": "Hybrid critique parsed (passed).",
-                "rhyme_integrity": {"score": 5, "verdict": "pass", "feedback": "Rhyme passed."},
-                "vernacular": {"score": 5, "verdict": "pass", "feedback": "Natural spoken cadence."},
-                "cadence": {"score": 5, "verdict": "pass", "feedback": "Pocket sits cleanly."},
-                "cliches": {"score": 5, "verdict": "pass", "feedback": "No clichés detected."},
+        messages = [{"role": "user", "content": prompt}]
+        raw = self._chat(messages, model=gen.model, temperature=0.2, max_tokens=900).strip()
+        critique = self._parse_critique(raw)
+        if critique is None:
+            raw = self._chat(
+                messages + [
+                    {"role": "assistant", "content": raw or "(no reply)"},
+                    {"role": "user", "content": "That was not a valid JSON object. Reply with the JSON object only."},
+                ],
+                model=gen.model, temperature=0.0, max_tokens=900,
+            ).strip()
+            critique = self._parse_critique(raw)
+        if critique is None:
+            return {
+                "passed": True, "parsed": False, "score": None, "lines": [],
+                "summary": "Critic reply was not valid JSON; this turn was judged on engine checks only.",
+                "prompt": prompt, "raw_response": raw,
             }
+
+        rows = [r for r in (critique.get("lines") or []) if isinstance(r, dict)]
+        nonsense = [r for r in rows if r.get("makes_sense") is False]
+        hard_fails = [d for d in _CRITIC_HARD_DIMS
+                      if isinstance(critique.get(d), dict) and critique[d].get("verdict") == "fail"]
+        scores: list[float] = []
+        for d in _CRITIC_DIMS:
+            try:
+                scores.append(float(critique[d]["score"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        mean = sum(scores) / len(scores) if scores else 3.0
+        critique["lines"] = rows
+        critique["passed"] = critique.get("passed") is not False and not nonsense and not hard_fails
+        critique["score"] = round(mean - len(nonsense), 2)
+        critique["parsed"] = True
         critique["prompt"] = prompt
         critique["raw_response"] = raw
         return critique
@@ -2595,9 +2678,18 @@ Return a valid JSON object strictly matching this schema. No markdown formatting
                         if pw:
                             cands = rhyme_svc.rhymes(pw, gen)
                             yield {"type": "rhymes_injected", "section": sec_name, "end_word": pw, "rhymes": cands[:30]}
+                            # Each candidate is shown inside the phrases songs actually
+                            # land it in, so the model builds toward a sayable phrase
+                            # instead of bolting a rhyme word onto the line.
+                            offer = cands[:_PROMPT_RHYMES]
+                            landings = rhyme_svc.landings(offer, gen)
+                            shown = "; ".join(
+                                f"{w} ({' / '.join(landings[w.lower()])})" if landings.get(w.lower()) else w
+                                for w in offer)
                             rhyme_lines.append(
                                 f"    Line {sp['line']}: rhyme with Line {sp['partner']} (end word \"{pw}\")"
-                                + (f". True rhymes: {', '.join(cands[:_PROMPT_RHYMES])}" if cands else ""))
+                                + (f". True rhymes, with how real songs land them: {shown}. Pick the one that fits "
+                                   f"the scene; a clean slant rhyme beats one that makes no sense" if offer else ""))
                         else:
                             rhyme_lines.append(f"    Line {sp['line']}: rhyme with Line {sp['partner']} (written in this same block)")
                     elif letter != "-":
@@ -2745,6 +2837,7 @@ Return a valid JSON object strictly matching this schema. No markdown formatting
                     arc_parts.append(f"These lines deliver the resolution of [{sec_name}] and transition forward.")
                 else:
                     arc_parts.append(f"Developing the scene and cadence of [{sec_name}].")
+                section_scene = " ".join(arc_parts)
                 if rhyme_sound_guide.strip():
                     arc_parts.append(rhyme_sound_guide.strip())
                 struct_pos_block = f"STRUCTURAL POSITION:\n{pos_line}\n• Section Arc: {' '.join(arc_parts)}"
@@ -2767,10 +2860,15 @@ Return a valid JSON object strictly matching this schema. No markdown formatting
                     f"{adlib_fmt_rule}"
                 )
                 task_block = f"TASK:\n  Write [{sec_name}] {which}.\n{syl_lines}\n{rhyme_block}\n{out_rule}"
+                # The writing rules (sense first, land rhymes in real phrases, no
+                # filler) sit right above the task so they are read last.
+                rules_block = prompt_templates.line_rules_text()
 
-                p = f"{north_star_block}\n\n{struct_pos_block}\n\n{continuity_block}\n\n{task_block}"
+                p = f"{north_star_block}\n\n{struct_pos_block}\n\n{continuity_block}\n\n{rules_block}\n\n{task_block}"
                 accepted_block: list[str] = []
                 p_retry = ""
+                # (rank, attempt, lines) of the strongest usable attempt so far.
+                best_attempt: tuple[tuple[bool, bool, float, int], int, list[str]] | None = None
                 for attempt in range(1, gen.max_retries + 1):
                     current_p = p if attempt == 1 else p_retry
                     yield {
@@ -2892,49 +2990,91 @@ Return a valid JSON object strictly matching this schema. No markdown formatting
                             critical_violations.append(f"Contains banned phrase '{b}'.")
 
                     # ---------------- Tier 2: Critique LLM (Structured Evaluation) ----------------
-                    # Only invoked if lines PASS Tier 1 and user selected Auto LLM mode
+                    # Auto LLM mode: every attempt that clears Tier 1 is read by the critic,
+                    # the last one included, so the kept take is always a judged one.
                     tier1_passed = len(critical_violations) == 0 and len(produced) == count
-                    if is_hybrid_mode and tier1_passed and not (attempt == gen.max_retries):
+                    if is_hybrid_mode and tier1_passed:
                         try:
-                            # Build turn contract metadata for the critic
+                            # Rhyme contract plus measured facts per line: the critic
+                            # weighs evidence instead of guessing at sound or usage.
                             contract_items = []
-                            for sp in specs:
+                            engine_notes = []
+                            block_lines = [s_["line"] for s_ in specs]
+                            for sp, text in zip(specs, produced):
+                                st_c = self.workbench.ca.line_stat(text)
+                                pw = (self.workbench.ca.line_stat(provisional[sp["partner"] - 1]).end_word
+                                      if sp["partner"] and 1 <= sp["partner"] <= len(provisional) else "")
                                 if sp["partner"]:
-                                    pw = (self.workbench.ca.line_stat(provisional[sp["partner"] - 1]).end_word
-                                          if 1 <= sp["partner"] <= len(provisional) else "")
-                                    if sp["partner"] in [s_["line"] for s_ in specs]:
+                                    if sp["partner"] in block_lines:
                                         contract_items.append(f"• Line {sp['line']}: Must rhyme with Line {sp['partner']} (written together in this couplet).")
                                     elif pw:
                                         contract_items.append(f"• Line {sp['line']}: Must rhyme with Anchor Word \"{pw}\" (from preceding Line {sp['partner']}).")
                                 else:
                                     contract_items.append(f"• Line {sp['line']}: Opens a NEW sound; does NOT rhyme with other lines in this couplet.")
-                            rhyme_contract = "\n".join(contract_items)
-                            anchor_lines = [l for l in sec_lines[-2:]] if sec_lines else None
+                                note = (f"Line {sp['line']}: {st_c.syllables} syllables (guide {sp['min']}-{sp['max']}), "
+                                        f"ends on '{st_c.end_word}'")
+                                if pw and st_c.end_word:
+                                    comp = self.workbench.ph.compare(pw, st_c.end_word)
+                                    if comp:
+                                        note += f"; rhyme with '{pw}' measures as {comp.kind}"
+                                unseen = self.workbench.unseen_pairs(text)
+                                if unseen:
+                                    note += ("; common words that no song in the corpus puts side by side: "
+                                             + ", ".join(f"'{u}'" for u in unseen))
+                                engine_notes.append(note)
                             guide_parts = [f"Line {sp['line']}: ~{sp['target']} syl ({sp['min']}-{sp['max']})" for sp in specs]
                             meter_notes = f"Target tempo: {gen.bpm or 120} BPM. Syllable guide: {', '.join(guide_parts)}."
                             critique_data = self._run_llm_critique(
                                 produced, gen, section=sec_name,
-                                rhyme_contract=rhyme_contract,
-                                anchor_lines=anchor_lines,
+                                rhyme_contract="\n".join(contract_items),
+                                anchor_lines=list(recent_lines) or None,
                                 meter_notes=meter_notes,
+                                scene=section_scene,
+                                engine_notes=engine_notes,
+                                line_numbers=block_lines,
                             )
-                            if not critique_data.get("passed", True):
-                                # If Tier 2 critic fails, collect specific feedback to reinform generator
-                                c_summary = critique_data.get("summary") or "Critique flagged quality issues."
-                                critical_violations.append(f"Critic: {c_summary}")
-                                for dim in ("rhyme_integrity", "vernacular", "cadence", "cliches"):
-                                    dim_obj = critique_data.get(dim)
-                                    if isinstance(dim_obj, dict) and dim_obj.get("verdict") == "fail":
-                                        advisories.append(f"{dim.replace('_', ' ').title()}: {dim_obj.get('feedback', '')}")
                         except Exception as c_err:
-                            # Critic timeout or failure falls back gracefully to Tier 1 pass
-                            pass
+                            # A critic outage must not stall drafting, but it is shown
+                            # as unavailable, never as a pass with invented scores.
+                            critique_data = {
+                                "passed": True, "parsed": False, "score": None, "lines": [],
+                                "summary": f"Critic unavailable ({c_err}); this turn was judged on engine checks only.",
+                            }
+                        if not critique_data.get("passed", True):
+                            c_summary = critique_data.get("summary") or "Critique flagged quality issues."
+                            critical_violations.append(f"Critic: {c_summary}")
+                            for row in critique_data.get("lines") or []:
+                                if row.get("makes_sense") is False:
+                                    what = f"Line {row.get('line')} does not make sense"
+                                    if (row.get("meaning") or "").strip():
+                                        what += f" (reads as: {row['meaning'].strip()})"
+                                    if (row.get("forced_word") or "").strip():
+                                        what += f"; '{row['forced_word'].strip()}' is only there for the rhyme or length"
+                                    critical_violations.append(what + ".")
+                            for dim in _CRITIC_DIMS:
+                                dim_obj = critique_data.get(dim)
+                                if isinstance(dim_obj, dict) and dim_obj.get("verdict") == "fail":
+                                    advisories.append(f"{dim.replace('_', ' ').title()}: {dim_obj.get('feedback', '')}")
 
                     passed = len(critical_violations) == 0 and len(produced) == count
                     issues = list(critical_violations)
                     if not passed and advisories:
                         issues.extend(advisories)
                     is_last = (attempt == gen.max_retries)
+                    # Rank every usable attempt so a failed final retry never
+                    # overwrites a better earlier take. A missing critic score is neutral.
+                    usable = [t for t in (produced or []) if t and t.strip()][:count]
+                    c_score = critique_data.get("score") if critique_data else None
+                    rank = (passed, tier1_passed,
+                            float(c_score) if isinstance(c_score, (int, float)) else 3.0,
+                            -len(critical_violations))
+                    if usable and (best_attempt is None or rank >= best_attempt[0]):
+                        best_attempt = (rank, attempt, usable)
+                    kept_attempt: int | None = None
+                    if passed:
+                        accepted_block, kept_attempt = usable, attempt
+                    elif is_last and best_attempt:
+                        accepted_block, kept_attempt = best_attempt[2], best_attempt[1]
                     first_st = self.workbench.ca.line_stat(produced[0]) if produced else self.workbench.ca.line_stat("")
                     val_data = {
                         "passed": passed,
@@ -2956,6 +3096,7 @@ Return a valid JSON object strictly matching this schema. No markdown formatting
                         "advisories": advisories if not passed else [],
                         "validation_mode": gen.validation_mode,
                         "critique": critique_data,
+                        "kept_attempt": kept_attempt,
                     }
                     yield {"type": "validation", "turn_id": turn_id, "section": sec_name, "attempt": attempt, "validation": val_data}
                     if critique_data:
@@ -2977,32 +3118,39 @@ Return a valid JSON object strictly matching this schema. No markdown formatting
                         "attempt": attempt,
                         "max_attempts": gen.max_retries,
                         "validation": val_data,
-                        "accepted_line": "\n".join(produced) if (passed or is_last) else None,
+                        "accepted_line": "\n".join(accepted_block) if kept_attempt is not None else None,
                     })
                     turn_id += 1
 
                     if passed or is_last:
-                        # Accept only real, non-empty lines the model produced.
+                        # Only real, non-empty lines the model produced are kept.
                         # NEVER pad with hardcoded filler and NEVER accept blank
                         # lines: a short section beats junk committed as lyrics.
-                        accepted_block = [t for t in (produced or []) if t and t.strip()][:count]
                         break
-                    else:
-                        issues_summary = "\n    • ".join(issues)
-                        prior = " / ".join(produced) if produced else "(nothing usable)"
-                        want = "; ".join(f"Line {sp['line']} = {_words(sp['min'], sp['max'])}" for sp in specs)
-                        p_retry = (
-                            f"{north_star_block}\n\n"
-                            f"{struct_pos_block}\n\n"
-                            f"{continuity_block}\n\n"
-                            f"TASK (REVISION):\n"
-                            f"  Previous draft: \"{prior}\"\n"
-                            f"  Issues to fix:\n    • {issues_summary}\n\n"
-                            f"  Write [{sec_name}] {which}.\n"
-                            f"{syl_lines}\n"
-                            f"{rhyme_block}\n"
-                            f"{out_rule}"
-                        )
+                    issues_summary = "\n    • ".join(issues)
+                    prior = " / ".join(produced) if produced else "(nothing usable)"
+                    # The critic's rewrites ride along so the retry starts from a
+                    # line that already makes sense instead of re-forcing the rhyme.
+                    fixes = [r for r in ((critique_data or {}).get("lines") or [])
+                             if isinstance(r.get("fix"), str) and r["fix"].strip()]
+                    fix_block = ""
+                    if fixes:
+                        fix_block = ("  Editor's suggested rewrites (use them, or write something better that keeps the same sense):\n"
+                                     + "\n".join(f"    Line {r.get('line')}: {r['fix'].strip()}" for r in fixes) + "\n\n")
+                    p_retry = (
+                        f"{north_star_block}\n\n"
+                        f"{struct_pos_block}\n\n"
+                        f"{continuity_block}\n\n"
+                        f"{rules_block}\n\n"
+                        f"TASK (REVISION):\n"
+                        f"  Previous draft: \"{prior}\"\n"
+                        f"  Issues to fix:\n    • {issues_summary}\n\n"
+                        f"{fix_block}"
+                        f"  Write [{sec_name}] {which}.\n"
+                        f"{syl_lines}\n"
+                        f"{rhyme_block}\n"
+                        f"{out_rule}"
+                    )
 
                 for text in accepted_block:
                     all_lines.append(text)
@@ -3474,7 +3622,12 @@ Return a valid JSON object strictly matching this schema. No markdown formatting
             if sp.get("sound"):
                 rh = f" (end-rhyme sound {sp['sound']}"
                 if sp["partner_word"]:
-                    rh += f", like \"{sp['partner_word']}\"" + (f"; true rhymes: {', '.join(sp['rhymes'][:_PROMPT_RHYMES])}" if sp["rhymes"] else "")
+                    offer = sp["rhymes"][:_PROMPT_RHYMES]
+                    landings = self._rhyme_service().landings(offer, gen) if offer else {}
+                    shown = ", ".join(
+                        f"{w} ({' / '.join(landings[w.lower()])})" if landings.get(w.lower()) else w
+                        for w in offer)
+                    rh += f", like \"{sp['partner_word']}\"" + (f"; true rhymes, as real songs land them: {shown}" if offer else "")
                 rh += ")"
             slot_rows.append(f"    L{sp['line']}: {role_txt}{rh}")
         slots = "\n".join(slot_rows)

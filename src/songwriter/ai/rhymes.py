@@ -103,6 +103,21 @@ class RhymeService:
         if high_freq >= 5 and len(cands) >= 40:
             return max(MIN_ANCHOR_FERTILITY, high_freq)
         return high_freq
+    def landings(self, words: list[str], gen: SongGeneration) -> dict[str, list[str]]:
+        """How real songs land each rhyme word ('apart' -> 'fall apart'), limited
+        to phrases the song's register allows."""
+        return self._wb.rhyme_landings(words, exclude_tags=self._excluded_tags(gen))
+
+    @staticmethod
+    def _excluded_tags(gen: SongGeneration) -> tuple[str, ...]:
+        """Dictionary register tags the song's settings rule out."""
+        exclude: list[str] = []
+        if not gen.allow_offensive:
+            exclude += ["offensive", "vulgar"]
+        if not gen.allow_slang:
+            exclude.append("slang")
+        return tuple(exclude)
+
     @staticmethod
     def _banned_partners(word: str, gen: SongGeneration) -> set[str]:
         out: set[str] = set()
@@ -114,11 +129,7 @@ class RhymeService:
 
     def _query(self, w: str, gen: SongGeneration, mood: str | None) -> list[str]:
         self.lookups += 1
-        exclude: list[str] = []
-        if not gen.allow_offensive:
-            exclude += ["offensive", "vulgar"]
-        if not gen.allow_slang:
-            exclude.append("slang")
+        exclude = list(self._excluded_tags(gen))
 
         seen = {w}
         out: list[str] = []

@@ -198,6 +198,7 @@ class Workbench:
         self._word_freq = lru_cache(maxsize=32768)(self._word_freq_uncached)
         self._pair_freq = lru_cache(maxsize=32768)(self._pair_freq_uncached)
         self.phrase_freq = lru_cache(maxsize=32768)(self._phrase_freq_uncached)
+        self._token_total: int | None = None
     @property
     def db(self) -> Any | None:
         if not self._db_path.exists():
@@ -319,6 +320,112 @@ class Workbench:
             if len(chosen) >= top:
                 break
         return chosen
+
+    def rhyme_landings(self, words: list[str], per_word: int = 2,
+                       exclude_tags: tuple[str, ...] = (), min_songs: int = 5) -> dict[str, list[str]]:
+        """Most-sung phrases ending on each word ('apart' -> 'fall apart',
+        'falling apart'), from the corpus 2-4 grams.
+
+        Shows the line-writer how a rhyme word is actually used, so it builds the
+        line toward a phrase singers say instead of bolting the word on. Skipped:
+        phrases of only function words plus the target ('me apart'), repeats
+        ('red red'), phrases nested in one already chosen, phrases from fewer than
+        ``min_songs`` songs, and phrases with a word carrying an ``exclude_tags``
+        register label (the song's slang/vulgar settings).
+        """
+        db = self.db
+        ws = list(dict.fromkeys(w.strip().lower() for w in words if w and w.strip()))
+        if db is None or not ws:
+            return {}
+        try:
+            rows = db.execute(
+                "SELECT gram, split_part(gram, ' ', -1) FROM corpus_ngram "
+                "WHERE n BETWEEN 2 AND 4 AND song_count >= ? "
+                "AND split_part(gram, ' ', -1) IN (SELECT unnest(?::VARCHAR[])) "
+                "ORDER BY freq DESC", [min_songs, ws]).fetchall()
+        except Exception:
+            return {}
+        # Shortlist on shape first, so the register lookup touches few words.
+        shortlist: dict[str, list[str]] = {}
+        for gram, last in rows:
+            picked = shortlist.setdefault(last, [])
+            if len(picked) >= per_word * 4:
+                continue
+            toks = gram.split()
+            if (any(len(t) < 2 and t not in ("a", "i") for t in toks)
+                    or len(set(toks)) < len(toks)
+                    or all(t in _CLICHE_STOP for t in toks[:-1])):
+                continue
+            picked.append(gram)
+        barred: set[str] = set()
+        if exclude_tags:
+            toks = sorted({t for grams in shortlist.values() for g in grams for t in g.split()})
+            try:
+                for (lemma,) in db.execute(
+                        "SELECT lemma FROM word WHERE lemma IN (SELECT unnest(?::VARCHAR[])) "
+                        "AND list_has_any(tags, ?::VARCHAR[])",
+                        [toks, list(exclude_tags)]).fetchall():
+                    barred.add(lemma)
+            except Exception:
+                return {}
+        out: dict[str, list[str]] = {}
+        for w in ws:
+            chosen: list[str] = []
+            for gram in shortlist.get(w, []):
+                if len(chosen) >= per_word:
+                    break
+                if barred.intersection(gram.split()):
+                    continue
+                if any(p.endswith(" " + gram) or gram.endswith(" " + p) for p in chosen):
+                    continue
+                chosen.append(gram)
+            if chosen:
+                out[w] = chosen
+        return out
+
+    def unseen_pairs(self, line: str, min_expected: float = 50.0, limit: int = 3) -> list[str]:
+        """Adjacent word pairs in ``line`` that never occur in the corpus, although
+        both words are common enough that they should meet by chance.
+
+        'up apart' (expected ~1,000 times, seen 0) marks a spliced idiom; 'gravel
+        street' (expected <1) is only a fresh image and is not reported. Pairs are
+        read within clauses, so 'under, whisper' is no pair. A pointer for the
+        critic, never a verdict: roughly 1 real lyric line in 9 contains one.
+        """
+        db = self.db
+        if db is None:
+            return []
+        text = re.sub(r"\([^)]*\)", " ", line.lower().replace("\u2019", "'"))
+        clauses = [re.findall(r"[a-z]+(?:'[a-z]+)*", c)
+                   for c in re.split(r"[,.;:!?\"\u2014\u2013]+|\s-\s", text)]
+        pairs = [(a, b) for cl in clauses for a, b in zip(cl, cl[1:])]
+        if not pairs:
+            return []
+        try:
+            if self._token_total is None:
+                r = db.execute("SELECT sum(corpus_freq) FROM lexicon WHERE word_count=1").fetchone()
+                self._token_total = int(r[0] or 0) if r else 0
+            if not self._token_total:
+                return []
+            words = sorted({w for p in pairs for w in p})
+            grams = sorted({f"{a} {b}" for a, b in pairs})
+            freq = dict(db.execute(
+                "SELECT word, corpus_freq FROM lexicon WHERE word_count=1 "
+                "AND word IN (SELECT unnest(?::VARCHAR[]))", [words]).fetchall())
+            seen = {g for (g,) in db.execute(
+                "SELECT gram FROM corpus_ngram WHERE n=2 "
+                "AND gram IN (SELECT unnest(?::VARCHAR[]))", [grams]).fetchall()}
+        except Exception:
+            return []
+        scored: dict[str, float] = {}
+        for a, b in pairs:
+            gram = f"{a} {b}"
+            if gram in seen:
+                continue
+            expected = (freq.get(a) or 0) * (freq.get(b) or 0) / self._token_total
+            if expected >= min_expected:
+                scored[gram] = expected
+        return sorted(scored, key=scored.get, reverse=True)[:limit]
     @staticmethod
     def _verdict(pair_freq: int | None) -> str:
         if pair_freq is None:

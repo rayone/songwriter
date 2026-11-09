@@ -40,20 +40,33 @@ function responsePanelInner(cleaned, raw, modelName) {
 function critiquePanelHtml(critique, modelName) {
   if (!critique) return '';
   const passed = critique.passed !== false;
-  const verdict = passed ? '✓ Passed critique' : '✗ Failed critique';
+  const verdict = critique.parsed === false
+    ? '– Critique unavailable'
+    : (passed ? '✓ Passed critique' : '✗ Failed critique');
   const dims = [
+    { key: 'sense', label: 'Sense' },
+    { key: 'story', label: 'Story & Flow' },
     { key: 'rhyme_integrity', label: 'Rhyme Integrity' },
     { key: 'vernacular', label: 'Vernacular' },
     { key: 'cadence', label: 'Cadence' },
     { key: 'cliches', label: 'Clichés' }
   ];
-  const rows = dims.map(function(d) {
+  const rows = dims.filter(d => critique[d.key]).map(function(d) {
     const info = critique[d.key] || {};
     const score = info.score != null ? ` [${info.score}/5]` : '';
     const fb = info.feedback ? `: ${escapeHtml(info.feedback)}` : '';
     const isFail = info.verdict === 'fail';
     const cls = isFail ? 'c-rose fw-600' : 'c-dim';
     return `<div class="fs-xs ${cls}">• <b>${d.label}${score}</b>${fb}</div>`;
+  }).join('');
+
+  // Per-line read: what the critic understood each line to mean, and its rewrite.
+  const lineRows = (critique.lines || []).map(function(r) {
+    const bad = r.makes_sense === false;
+    const meaning = r.meaning ? `reads as “${escapeHtml(r.meaning)}”` : '';
+    const forced = r.forced_word ? ` · forced: '${escapeHtml(r.forced_word)}'` : '';
+    const fix = r.fix ? ` · fix: <span class="c-bright">${escapeHtml(r.fix)}</span>` : '';
+    return `<div class="fs-xs ${bad ? 'c-rose' : 'c-dim'}">L${escapeHtml(String(r.line ?? ''))}: ${meaning}${forced}${fix}</div>`;
   }).join('');
 
   const summary = critique.summary ? `<div class="fs-xs mt-3 fw-600 c-bright">${escapeHtml(critique.summary)}</div>` : '';
@@ -66,6 +79,7 @@ function critiquePanelHtml(critique, modelName) {
   return `
     <div class="turn-panel-title">${escapeHtml(modelLabel(modelName))} Critique <span class="turn-verdict">${verdict}</span></div>
     ${summary}
+    ${lineRows ? `<div class="mt-3">${lineRows}</div>` : ''}
     <div class="mt-3">${rows}</div>
     ${promptHtml}
   `;
@@ -270,7 +284,11 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
             const v = ev.validation || {};
             slot.classList.toggle('pass', !!v.passed);
             slot.classList.toggle('fail', !v.passed);
-            slot.innerHTML = analysisPanelInner(v.passed, v.scan || [], v.issues || [], v.critical_violations || [], v.advisories || []);
+            // On the final attempt the loop keeps the strongest take, which may be an earlier one.
+            const kept = v.kept_attempt && v.kept_attempt !== ev.attempt
+              ? `<div class="fs-xs c-amber mt-3">↺ Kept attempt ${escapeHtml(String(v.kept_attempt))}, the strongest take for this turn.</div>`
+              : '';
+            slot.innerHTML = analysisPanelInner(v.passed, v.scan || [], v.issues || [], v.critical_violations || [], v.advisories || []) + kept;
             chatWindow.scrollTop = chatWindow.scrollHeight;
           }
         } else if (ev.type === 'critique') {

@@ -227,3 +227,19 @@ test('model label falls back cleanly when no model is known', () => {
   assert.equal(c.modelLabel(''), 'the model');
   assert.equal(c.modelLabel('claude-x'), 'claude-x');
 });
+
+test('critique panel never shows an unreadable critic reply as a pass, and shows line fixes', () => {
+  const { c } = harness();
+  const unreadable = c.critiquePanelHtml({ passed: true, parsed: false, summary: 'Critic reply was not valid JSON.' }, 'glm-4.6');
+  assert.match(unreadable, /Critique unavailable/);
+  assert.doesNotMatch(unreadable, /Passed critique/);
+  const failed = c.critiquePanelHtml({
+    passed: false, parsed: true,
+    sense: { score: 1, verdict: 'fail', feedback: 'spliced idiom' },
+    lines: [{ line: 2, meaning: 'rip me to pieces', makes_sense: false, forced_word: 'up', fix: 'Break me apart' }]
+  }, 'glm-4.6');
+  assert.match(failed, /Failed critique/);
+  assert.match(failed, /Sense \[1\/5\]/);
+  assert.match(failed, /forced: 'up'/);
+  assert.match(failed, /fix: <span class="c-bright">Break me apart<\/span>/);
+});

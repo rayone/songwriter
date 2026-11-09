@@ -29,8 +29,13 @@ _seeded = False
 # prompt in the UI lets an operator change any of this per prompt.
 _LINE_RULES = (
     "WRITING RULES:\n"
+    "- Sense first: every line says something a real person would sing; you could restate it in plain words.\n"
     "- Style: Conversational SVO spoken English; concrete sensory details; no melodramatic filler.\n"
     "- Rhymes: True content-word rhymes only (ban clichés: night/light, fire/desire, love). Never invert syntax.\n"
+    "- Land the rhyme inside a phrase people actually say ('fall apart', 'from the start'); never bolt a\n"
+    "  rhyme word onto a line it does not belong in, and never splice two idioms together. A clean slant\n"
+    "  rhyme beats a perfect rhyme that makes no sense.\n"
+    "- Length: a word or two short is fine; never add filler words just to reach a count.\n"
     "- Continuity: Each line continues the narrative scene of the line before it."
 )
 
