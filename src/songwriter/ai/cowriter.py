@@ -2883,6 +2883,7 @@ Respond with JSON only, no prose, in exactly this shape:
 
                 p = f"{north_star_block}\n\n{struct_pos_block}\n\n{continuity_block}\n\n{rules_block}\n\n{task_block}"
                 accepted_block: list[str] = []
+                accepted_passed = True  # False if a block is accepted only as the best failed take
                 p_retry = ""
                 # (rank, attempt, lines) of the strongest usable attempt so far.
                 best_attempt: tuple[tuple[bool, bool, float, int], int, list[str]] | None = None
@@ -3124,7 +3125,10 @@ Respond with JSON only, no prose, in exactly this shape:
                     if passed:
                         accepted_block, kept_attempt = usable, attempt
                     elif is_last and best_attempt:
+                        # No attempt passed: keep the best take so the section is not
+                        # lost, but mark it NOT passed -- the best take's own rank[0].
                         accepted_block, kept_attempt = best_attempt[2], best_attempt[1]
+                        accepted_passed = accepted_passed and bool(best_attempt[0][0])
                     first_st = self.workbench.ca.line_stat(produced[0]) if produced else self.workbench.ca.line_stat("")
                     val_data = {
                         "passed": passed,
@@ -3210,14 +3214,19 @@ Respond with JSON only, no prose, in exactly this shape:
             if is_chorus and not cached_chorus_lines:
                 cached_chorus_lines = list(sec_lines)
 
-            # A section that never reached its planned line count (e.g. every
-            # retry's reply was cut off) is recorded as incomplete, so the song is
-            # finalized as such instead of silently shipping with a short section.
+            # A section is incomplete when it is short of its planned line count OR
+            # when its lines were only accepted as the best failed take (no attempt
+            # passed the engine). Either way the song is finalized as incomplete, so
+            # a persistently non-rhyming or nonsensical draft is never shown as
+            # verified just because it has the right number of lines.
             planned = gen.lines_in_section(sec_name)
-            if not gen.repeat_of(sec_name) and len(sec_lines) < planned:
-                incomplete_sections.append({"name": sec_name, "have": len(sec_lines), "planned": planned})
+            if not gen.repeat_of(sec_name) and (len(sec_lines) < planned or not accepted_passed):
+                short = len(sec_lines) < planned
+                reason = "short" if short else "did not pass validation"
+                incomplete_sections.append({"name": sec_name, "have": len(sec_lines),
+                                            "planned": planned, "reason": reason})
                 yield {"type": "section_incomplete", "section": sec_name,
-                       "have": len(sec_lines), "planned": planned}
+                       "have": len(sec_lines), "planned": planned, "reason": reason}
             sections_out.append({
                 "name": sec_name,
                 "kind": sec_kind,

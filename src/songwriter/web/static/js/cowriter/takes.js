@@ -337,8 +337,13 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
     if (!completeData) throw new Error('The stream ended before the song was complete. Please re-draft this take.');
     renderTake(completeData, takeId);
     if (completeData.status === 'incomplete') {
-      const names = (completeData.incomplete_sections || []).map(s => `${s.name} (${s.have}/${s.planned})`).join(', ');
-      takeStatus(take, 'Song incomplete — short section(s): ' + (names || 'see panel') + '. Re-draft to fill them.', 'yellow');
+      const names = (completeData.incomplete_sections || []).map(function (s) {
+        const detail = s.reason === 'did not pass validation'
+          ? 'did not pass validation'
+          : `${s.have}/${s.planned} lines`;
+        return `${s.name} (${detail})`;
+      }).join(', ');
+      takeStatus(take, 'Song incomplete — ' + (names || 'see panel') + '. Re-draft to fix.', 'yellow');
     } else {
       takeStatus(take, 'Song complete! Verified against all scansion rules.', 'green');
     }

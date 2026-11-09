@@ -227,3 +227,30 @@ def test_syllable_miss_beyond_tolerance_fails_smaller_miss_is_advisory(
     assert first["passed"] is False
     assert any("syllables, aiming" in i for i in first["issues"])
     assert [e["line"] for e in events if e.get("type") == "line_accepted"] == ["Take my heart", "Break me apart"]
+
+
+def test_every_attempt_nonrhyming_finalizes_incomplete_not_verified(
+    cowriter: SongwriterCowriter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The writer returns a non-rhyming pair on every attempt. The engine fails them
+    # all; the best take is kept so the section is not lost, but the song finalizes
+    # as "incomplete" (not verified) with the section flagged, so a persistently
+    # non-rhyming draft never ships as finished. Needs the corpus for phonetics.
+    if cowriter.workbench.db is None:
+        pytest.skip("corpus database not available")
+    saved: list[object] = []
+    monkeypatch.setattr(cowriter.song_store, "save", lambda gen: saved.append(gen) or gen)
+    monkeypatch.setattr(cowriter, "_chat",
+                        lambda messages, **kw: '{"passed": true, "summary": "ok", "lines": []}'
+                        if _is_critic(messages)
+                        else "Line 1: Take my heart\nLine 2: Walking down the street")  # never rhymes 'heart'
+    events = list(cowriter.stream_song_interactive(max_retries=2, **_LOVE))
+
+    # Every attempt failed on the engine's rhyme check.
+    assert all(e["validation"]["passed"] is False
+               for e in events if e.get("type") == "validation")
+    inc = [e for e in events if e.get("type") == "section_incomplete"]
+    assert inc and inc[0]["reason"] == "did not pass validation"
+    done = next(e for e in events if e.get("type") == "complete")
+    assert done["status"] == "incomplete"
+    assert saved and saved[-1].status == "incomplete"

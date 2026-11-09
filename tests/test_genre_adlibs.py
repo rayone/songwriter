@@ -69,10 +69,11 @@ def test_forbidden_end_tag_is_stripped_from_a_line() -> None:
     assert C._strip_end_tag("No tag here") == "No tag here"
 
 
-def test_every_ambient_reply_with_hey_still_finalizes_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_every_ambient_reply_with_hey_is_stripped_before_it_ships(monkeypatch: pytest.MonkeyPatch) -> None:
     # Even if the writer ends every attempt on ", hey", a trance song must never
-    # ship the tag: it is stripped before validation, so the accepted line is clean
-    # and the turn passes on its real words, not rejected forever.
+    # ship the tag: it is stripped before validation, so the kept lines are clean.
+    # (Whether the turn passes depends on the corpus rhyme check; this test asserts
+    # only the stripping, which holds with or without the corpus.)
     cw = SongwriterCowriter()
     love = dict(
         prompt="night drive", story="x", model="test-model", genre="Ethereal Trance Ambient",
@@ -87,8 +88,10 @@ def test_every_ambient_reply_with_hey_still_finalizes_clean(monkeypatch: pytest.
 
     monkeypatch.setattr(cw, "_chat", chat)
     events = list(cw.stream_song_interactive(max_retries=2, **love))
+    # Every response the engine saw had the tag stripped.
+    for e in events:
+        if e.get("type") == "response":
+            assert "hey" not in e["response"].lower()
     accepted = [e["line"] for e in events if e.get("type") == "line_accepted"]
     assert accepted == ["Take my heart", "Break me apart"]
     assert not any("hey" in line.lower() for line in accepted)
-    done = next(e for e in events if e.get("type") == "complete")
-    assert done["status"] == "finalized"  # clean lines fill the section
