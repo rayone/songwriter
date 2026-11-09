@@ -266,6 +266,7 @@ class SettingsUpdate(BaseModel):
     writer_max_tokens: int | None = Field(default=None, description="Longest reply the Step 4 line writer may write (tokens); a cut-off reply is retried with a bigger budget")
     syllable_tolerance: int | None = Field(default=None, description="Lines more than this many syllables outside the guide fail the turn; smaller misses go to the critic")
     critic_max_tokens: int | None = Field(default=None, description="Longest reply the Step 4 lyric critic may write (tokens)")
+    no_end_tag_genres: str | None = Field(default=None, description="Genre keywords (one per line) that never clip a shouted vocal tag onto a line end")
     unseen_pair_min_expected: int | None = Field(default=None, description="Report a never-sung word pair to the critic when chance predicts it at least this often")
     rhyme_landing_min_songs: int | None = Field(default=None, description="A rhyme phrase example must appear in at least this many songs")
 

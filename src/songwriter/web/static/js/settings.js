@@ -20,6 +20,7 @@ async function loadSettings() {
     put('set-default-vocal', 'default_vocal');
     put('set-cliche-min-freq', 'cliche_min_freq');
     put('set-idiom-allowlist', 'idiom_allowlist');
+    put('set-no-end-tag-genres', 'no_end_tag_genres');
     put('set-writer-max-tokens', 'writer_max_tokens');
     put('set-syllable-tolerance', 'syllable_tolerance');
     put('set-critic-max-tokens', 'critic_max_tokens');
@@ -110,6 +111,7 @@ async function saveSettings(silent) {
     cliche_check_enabled: (el('set-cliche-check-enabled') && el('set-cliche-check-enabled').checked) ? 'true' : 'false',
     melodic_delta_enabled: (el('set-melodic-delta-enabled') && el('set-melodic-delta-enabled').checked) ? 'true' : 'false',
     idiom_allowlist: (el('set-idiom-allowlist') && el('set-idiom-allowlist').value) || '',
+    no_end_tag_genres: (el('set-no-end-tag-genres') && el('set-no-end-tag-genres').value) || '',
     writer_max_tokens: parseInt(val('set-writer-max-tokens'), 10) || undefined,
     syllable_tolerance: (function () { const n = parseInt(val('set-syllable-tolerance'), 10); return Number.isNaN(n) ? undefined : n; })(),
     critic_max_tokens: parseInt(val('set-critic-max-tokens'), 10) || undefined,

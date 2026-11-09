@@ -48,6 +48,11 @@ _SPEC: dict[str, tuple[str, Any]] = {
     "critic_max_tokens": ("SONGWRITER_CRITIC_MAX_TOKENS", 900),
     "unseen_pair_min_expected": ("SONGWRITER_UNSEEN_PAIR_MIN_EXPECTED", 50),
     "rhyme_landing_min_songs": ("SONGWRITER_RHYME_LANDING_MIN_SONGS", 5),
+    # Genre keywords (one per line) that never clip a shouted vocal tag (", hey")
+    # onto a line end. A song whose genre matches one of these has end tags stripped.
+    "no_end_tag_genres": ("SONGWRITER_NO_END_TAG_GENRES",
+                          "trance\nambient\nsynthwave\nhouse\ntechno\nedm\ndowntempo\n"
+                          "chillout\nchillwave\nlo-fi\nlofi\ndub\nidm\ndrum and bass\ndnb"),
 }
 
 SECRET_KEYS = frozenset({"llm_api_key"})

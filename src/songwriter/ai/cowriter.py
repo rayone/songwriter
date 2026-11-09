@@ -690,7 +690,7 @@ class SongwriterCowriter:
                     if 4 <= len(w1) <= 12 and 4 <= len(w2) <= 12:
                         return (ref.get("title") or "Reference", ref.get("artist") or "", l1, l2)
 
-        c_genre = self._genre_vocables_guide(gen.genre, gen.style).get("category", "").lower()
+        # Pick a canonical reference couplet by matching the genre/style text.
         mapping = {
             "pop": ("Save Your Tears", "The Weeknd"),
             "rock": ("Dreams", "Fleetwood Mac"),
@@ -703,7 +703,7 @@ class SongwriterCowriter:
         match = ("Save Your Tears", "The Weeknd")
         combined = f"{gen.genre} {gen.style}".lower()
         for k, v in mapping.items():
-            if k in combined or k == c_genre:
+            if k in combined:
                 match = v
                 break
 
@@ -2070,6 +2070,13 @@ Respond with JSON only, no prose, in exactly this shape:
             "calls": ["(doo-wop)", "(ba-da-da)", "(scat)", "(shoo-be-doo)", "(bop)", "(skat)"],
             "melodic_filler": ["Doo-wop, doo-wop", "Ba-da-dat-dat", "Shoo-be-doo-wah", "Mmm-hmm"],
             "usage": "Use syncopated scat phrases, swing interjections, and smooth vocalized brass mimes."},
+        "electronic": {
+            "category": "Electronic / Ambient Sustained Vocables",
+            "calls": ["(ooh)", "(ahh)", "(mmm)", "(oooh)"],
+            "melodic_filler": ["Ooh...", "Ahh...", "Mmm..."],
+            "usage": "Only sustained, airy vowel sounds that float in the mix ('Ooh...', 'Ahh...'), "
+                     "placed sparingly at phrase ends. NEVER shouted or spoken tags like 'hey', 'yeah', "
+                     "'ayy', and NEVER a comma tag clipped onto a line end."},
     }
     # Canonical genre -> set key. First match wins; longest/most-specific first.
     _GENRE_TO_SET: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -2078,14 +2085,22 @@ Respond with JSON only, no prose, in exactly this shape:
         (("r&b", "rnb", "soul", "neo-soul", "funk", "motown"), "rb"),
         (("country", "folk", "americana", "bluegrass"), "country"),
         (("jazz", "swing"), "jazz"),
+        # Electronic families come before pop so 'synth-pop'/'electropop' still read
+        # as pop, but trance/ambient/house/techno/synthwave do not fall through to it.
+        (("trance", "ambient", "synthwave", "house", "techno", "edm", "downtempo",
+          "chillout", "chillwave", "lo-fi", "lofi", "dub", "idm", "drum and bass", "dnb"), "electronic"),
         (("pop", "dance", "synth-pop", "disco", "electropop", "electro"), "pop"),
         (("rock", "metal", "punk", "grunge"), "rock"),
     )
+    # Genre families that never clip a shouted/spoken vocal tag onto line ends. A
+    # reference's delivery tags are ignored for these: genre gates what's allowed.
+    _NO_END_TAG_SETS = frozenset({"electronic"})
     _VOCABLE_DEFAULT: dict[str, Any] = {
-        "category": "Contemporary Melodic Vocables & Ad-Libs",
-        "calls": ["(ooh)", "(whoa)", "(yeah)", "(mmm)", "(hey)", "(ahh)"],
-        "melodic_filler": ["Ooh-whoa", "Mmm-yeah", "Yeah-yeah", "Oh-oh"],
-        "usage": "Use expressive non-word vocables to add color, emotional depth, and rhythmic bounce.",
+        "category": "None -- no ad-libs for an unrecognised genre",
+        "calls": ["(none)"],
+        "melodic_filler": ["(none)"],
+        "usage": "Genre is unrecognised, so add no parenthetical ad-libs or vocal tags. "
+                 "Let the lines stand on their own.",
     }
     # Intimate / solitary songs: no parenthetical interjections at all.
     _VOCABLE_QUIET: dict[str, Any] = {
@@ -2103,17 +2118,33 @@ Respond with JSON only, no prose, in exactly this shape:
     )
 
     @classmethod
-    def _vocables_for(cls, gen: "SongGeneration") -> dict[str, Any]:
-        """Ad-lib set bound to the reference's delivery, then mood, then genre.
+    def _genre_set_key(cls, genre: str, style: str = "") -> str | None:
+        """The vocable set key for a song's genre ('electronic', 'pop', ...), or
+        None when neither the genre nor the free-text style matches a family."""
+        for src in ((genre or "").lower(), (style or "").lower()):
+            for keys, setkey in cls._GENRE_TO_SET:
+                if any(k in src for k in keys):
+                    return setkey
+        return None
 
-        1. A reference whose lines end on vocal tags ('ah', 'ayy') sets the
-           delivery: those tags, clipped onto line ends, never banned.
-        2. Without that, two or more quiet-mood words across brief, story and
-           interview answers suppress interjections.
-        3. Otherwise the genre set applies.
+    @classmethod
+    def _vocables_for(cls, gen: "SongGeneration") -> dict[str, Any]:
+        """Ad-lib set for the song. The genre decides what is allowed; the
+        reference only chooses within it.
+
+        1. The genre family gates end tags: a family in ``_NO_END_TAG_SETS``
+           (electronic/ambient) never clips a shouted tag onto a line, so a
+           reference's delivery tags are ignored and its own set applies.
+        2. Otherwise a reference whose lines end on vocal tags ('ah', 'ayy') sets
+           the delivery: those tags, clipped onto line ends.
+        3. Without that, two or more quiet-mood words suppress interjections.
+        4. Otherwise the genre set applies (no ad-libs for an unknown genre).
         """
+        set_key = cls._genre_set_key(gen.genre, gen.style)
+        # One policy: _genre_allows_end_tags (Settings-driven) gates the end-tag
+        # delivery here and the strip/validation below, so prompt and lyrics agree.
         tags = gen.delivery_tags()
-        if tags:
+        if tags and cls._genre_allows_end_tags(gen):
             quoted = ", ".join(f"'{t}'" for t in tags)
             return {
                 "category": "Reference delivery -- clipped lines with end tags",
@@ -2127,25 +2158,42 @@ Respond with JSON only, no prose, in exactly this shape:
                          " ".join(str(v) for v in (gen.answers or {}).values())])
         if len(set(m.lower() for m in cls._QUIET_MOOD.findall(text))) >= 2:
             return cls._VOCABLE_QUIET
-        return cls._genre_vocables_guide(gen.genre, gen.style)
+        return cls._VOCABLE_SETS[set_key] if set_key else cls._VOCABLE_DEFAULT
 
     @classmethod
-    def _genre_vocables_guide(cls, genre: str, style: str = "") -> dict[str, Any]:
-        """Vocable set for the song. The EXPLICIT genre decides it; the free-text
-        style only breaks ties when the genre doesn't match any known family.
-        This prevents a stray word in the brief (e.g. 'rock heartthrob') from
-        hijacking a Country song's ad-libs.
-        """
-        g = (genre or "").lower()
-        for keys, setkey in cls._GENRE_TO_SET:
-            if any(k in g for k in keys):
-                return cls._VOCABLE_SETS[setkey]
-        # Genre unknown/blank: fall back to sniffing the style text.
-        s = (style or "").lower()
-        for keys, setkey in cls._GENRE_TO_SET:
-            if any(k in s for k in keys):
-                return cls._VOCABLE_SETS[setkey]
-        return cls._VOCABLE_DEFAULT
+    def _genre_allows_end_tags(cls, gen: "SongGeneration") -> bool:
+        """Whether the song's GENRE permits a shouted/spoken vocal end tag at all,
+        independent of any reference. Two bans, either sufficient: the operator's
+        Settings keyword list (``no_end_tag_genres``), and the built-in electronic/
+        ambient set whose own vocables are wordless. Tag-friendly sets (pop, rap,
+        trap, rock, country, jazz, r&b) allow tags; an unknown genre adds none.
+        Removing a keyword from Settings lifts only that keyword ban, not the
+        built-in electronic-set ban."""
+        g = f"{gen.genre} {gen.style}".lower()
+        from songwriter import settings as _settings
+        forbidden = [k.strip().lower() for k in _settings.get_str("no_end_tag_genres").splitlines() if k.strip()]
+        if any(k in g for k in forbidden):
+            return False
+        set_key = cls._genre_set_key(gen.genre, gen.style)
+        return set_key is not None and set_key not in cls._NO_END_TAG_SETS
+
+    @classmethod
+    def _end_tags_for(cls, gen: "SongGeneration") -> list[str]:
+        """The reference's vocal end tags to offer the writer -- only when the
+        genre permits end tags. The genre gates; the reference merely selects
+        which tags. Empty when the genre forbids them or no reference supplied any."""
+        if not cls._genre_allows_end_tags(gen):
+            return []
+        return gen.delivery_tags()
+
+    @staticmethod
+    def _strip_end_tag(text: str) -> str:
+        """Remove a trailing shouted/spoken vocal tag (", hey", " (yeah)") and a
+        trailing parenthetical ad-lib, keeping the line's real words. Used when the
+        genre forbids end tags, so a forbidden tag never reaches the lyrics."""
+        out = re.sub(r"\s*\([^)]*\)\s*$", "", (text or "").strip())
+        out = REF_TAG_RE.sub("", out).strip()
+        return out
 
     @staticmethod
     def _clean_lyric_line(text: str, min_words: int = 3) -> str:
@@ -2716,7 +2764,7 @@ Respond with JSON only, no prose, in exactly this shape:
                 # without needing rigid, grammatically crippling sub-phrase splits (e.g. 6 words, 4 words).
                 def _shape(ln: int) -> str:
                     tag_match = REF_TAG_RE.search(gen.reference_line(sec_name, ln) or "")
-                    if tag_match and gen.delivery_tags():
+                    if tag_match and self._end_tags_for(gen):
                         return f"; ending tag: '{tag_match.group(1).lower()}'"
                     return ""
 
@@ -2814,9 +2862,10 @@ Respond with JSON only, no prose, in exactly this shape:
                 count = len(block)
                 which = f"Line {block[0]}" if count == 1 else f"Lines {block[0]}-{block[-1]}"
                 lines_fmt = "\n".join(f"    Line {ln}: [Lyric line]" for ln in block)
-                if gen.delivery_tags():
+                end_tags = self._end_tags_for(gen)
+                if end_tags:
                     adlib_fmt_rule = (
-                        f"  Vocal tags ({', '.join(repr(t) for t in gen.delivery_tags())}) should be placed after a comma at the end of the line (e.g. 'word, ah').\n"
+                        f"  Vocal tags ({', '.join(repr(t) for t in end_tags)}) should be placed after a comma at the end of the line (e.g. 'word, ah').\n"
                         f"  Do not stack parenthetical ad-libs after comma tags."
                     )
                 else:
@@ -2875,6 +2924,13 @@ Respond with JSON only, no prose, in exactly this shape:
                     # rather than committing a cut-off line as finished lyrics.
                     if cut_off and produced:
                         produced = produced[:-1]
+                    # A vocal end tag (", hey") is pure decoration. When the genre
+                    # forbids it, strip it from every line before validation so a
+                    # forbidden tag can never reach the final lyrics -- not even via
+                    # the best-of-failed-attempts fallback -- and the line is judged
+                    # and counted on its real words.
+                    if not self._genre_allows_end_tags(gen):
+                        produced = [self._strip_end_tag(t) for t in produced]
                     yield {"type": "response", "turn_id": turn_id, "section": sec_name,
                            "response": "\n".join(produced), "raw": raw, "attempt": attempt,
                            "cut_off": cut_off, "usage": meta.get("usage") or {}, "model": meta.get("model")}
@@ -2897,8 +2953,9 @@ Respond with JSON only, no prose, in exactly this shape:
                         if not text.strip():
                             critical_violations.append(f"Line {sp['line']} is empty.")
 
-                        # (Length is checked by syllables below, in every mode.)
-                        # 3. Trailing vocable tag cleanup & formatting
+                        # (Length is checked by syllables below, in every mode.
+                        # Forbidden end tags were already stripped before validation.)
+                        # 3b. Trailing vocable tag cleanup & formatting
                         if re.search(r"\([^)]+\)\s+\S+", text):
                             critical_violations.append(
                                 f"Line {sp['line']}: parenthetical ad-libs must be the final tokens on the line (no words allowed after parentheses)."
