@@ -40,7 +40,8 @@ _SPEC: dict[str, tuple[str, Any]] = {
                         "every single\nall the\nright now\nlook at\ncome on\n"
                         "out here\nevery time\none more time\nback and forth\n"
                         "side by side\nday and night\nnight and day"),
-    # Step 4 lyric critic and rhyme-phrase hints.
+    # Step 4 writer and lyric critic.
+    "writer_max_tokens": ("SONGWRITER_WRITER_MAX_TOKENS", 400),
     "critic_max_tokens": ("SONGWRITER_CRITIC_MAX_TOKENS", 900),
     "unseen_pair_min_expected": ("SONGWRITER_UNSEEN_PAIR_MIN_EXPECTED", 50),
     "rhyme_landing_min_songs": ("SONGWRITER_RHYME_LANDING_MIN_SONGS", 5),

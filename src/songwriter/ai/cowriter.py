@@ -2469,6 +2469,7 @@ Respond with JSON only, no prose, in exactly this shape:
             p.strip().lower() for p in _settings.get_str("idiom_allowlist").splitlines() if p.strip()
         )
         unseen_min = int(_settings.get("unseen_pair_min_expected"))
+        writer_budget = max(120, int(_settings.get("writer_max_tokens")))
 
         decisions_str = ("\n- Producer Interview Q&A & Creative Guidance:\n" + "\n".join(gen.interview_guide())) if gen.interview_guide() else ""
         vg = self._vocables_for(gen)
@@ -2845,10 +2846,34 @@ Respond with JSON only, no prose, in exactly this shape:
                         "attempt": attempt,
                         "max_attempts": gen.max_retries,
                     }
-                    raw = self._chat([{"role": "user", "content": current_p}], model=gen.model, temperature=0.7, max_tokens=60 * count + 20).strip()
-                    produced = self._clean_lyric_lines(raw, count)
+                    # A reply can come back cut off at the token limit, which can
+                    # drop a line or leave a truncated last word that still parses
+                    # as the right count. Retry in place with a bigger budget (not a
+                    # real attempt) while the endpoint reports it was cut off, so a
+                    # section is never lost to the limit. A short but complete reply
+                    # is a content miss, left to the normal attempt loop. The budget
+                    # only caps cost; unused tokens are not spent.
+                    produced: list[str] = []
+                    budget = max(writer_budget, 60 * count + 20)
+                    ceiling = writer_budget * 4
+                    cut_off = False
+                    for _grow in range(3):
+                        meta: dict[str, Any] = {}
+                        raw = self._chat([{"role": "user", "content": current_p}], model=gen.model,
+                                         temperature=0.7, max_tokens=min(budget, ceiling), meta=meta).strip()
+                        produced = self._clean_lyric_lines(raw, count)
+                        cut_off = meta.get("finish_reason") == "length"
+                        if not cut_off or budget >= ceiling:
+                            break
+                        budget = max(budget * 2, writer_budget * 2)
+                    # A reply still truncated at the ceiling can't be trusted as
+                    # whole: drop the last line so the turn fails and reports why,
+                    # rather than committing a cut-off line as finished lyrics.
+                    if cut_off and produced:
+                        produced = produced[:-1]
                     yield {"type": "response", "turn_id": turn_id, "section": sec_name,
-                           "response": "\n".join(produced), "raw": raw, "attempt": attempt}
+                           "response": "\n".join(produced), "raw": raw, "attempt": attempt,
+                           "cut_off": cut_off, "usage": meta.get("usage") or {}, "model": meta.get("model")}
 
                     # Tier 1 vs Full Mode selection based on gen.validation_mode
                     is_hybrid_mode = (gen.validation_mode == "auto_llm")
@@ -2859,7 +2884,8 @@ Respond with JSON only, no prose, in exactly this shape:
                     # ---------------- Tier 1 Code Gatekeeper (Zero API Cost) ----------------
                     # 1. Line Count
                     if len(produced) != count:
-                        critical_violations.append(f"Expected {count} line(s), got {len(produced)}.")
+                        reason = "was cut off at the token limit" if cut_off else "returned no usable line"
+                        critical_violations.append(f"Expected {count} line(s), got {len(produced)} (model {reason}).")
 
                     provisional = sec_lines + produced
                     for sp, text in zip(specs, produced):
@@ -3255,25 +3281,26 @@ Respond with JSON only, no prose, in exactly this shape:
         temperature: float = 0.7,
         top_p: float = 0.9,
         max_tokens: int = 900,
-        # Reasoning models (e.g. Gemini at default effort) can take 40-110 s on a
-        # full Step 4 prompt; 60 s cut them off mid-answer.
+        # A verbose model can take 40-110 s on a full Step 4 prompt; a 60 s
+        # deadline cuts it off mid-answer.
         timeout: int = 180,
         reasoning_effort: str | None = "low",
+        meta: dict[str, Any] | None = None,
     ) -> str:
+        """Return the reply text. If ``meta`` is given, it is filled with
+        ``finish_reason``, ``usage`` (prompt/completion/cached tokens) and the
+        ``model`` the endpoint reports, so the caller can tell a reply cut off at
+        the token limit from one the model never wrote."""
         active_model = (model or "").strip() or self.get_default_model()
         # Never send the model an empty/whitespace prompt: it replies
         # conversationally ("your message came through empty"), which then leaks
         # as a bogus lyric. Fail loudly so the caller can retry with real content.
         if not any((m.get("content") or "").strip() for m in messages):
             raise RuntimeError("Refusing to call the LLM with an empty prompt.")
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
 
-        # Standard OpenAI Chat Completions payload. Default reasoning_effort="low"
-        # stops reasoning/thinking models (e.g. Gemini 3.8/2.5) from generating
-        # 14,000 hidden thinking tokens and timing out on short couplets.
+        # A low reasoning_effort keeps a thinking model from spending the whole
+        # token budget on hidden reasoning and leaving nothing for the answer.
+        # Dropped automatically if the endpoint rejects it (see below).
         chat_payload: dict[str, Any] = {
             "model": active_model,
             "messages": messages,
@@ -3283,14 +3310,7 @@ Respond with JSON only, no prose, in exactly this shape:
             chat_payload["reasoning_effort"] = reasoning_effort
 
         def _send(payload: dict[str, Any]) -> str:
-            req = urllib.request.Request(
-                f"{self.endpoint}/chat/completions",
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"].strip()
+            return self._post_chat(payload, timeout=timeout, meta=meta)
 
         try:
             return _send(chat_payload)
@@ -3315,7 +3335,26 @@ Respond with JSON only, no prose, in exactly this shape:
             if isinstance(getattr(err, "reason", None), (TimeoutError, socket.timeout)):
                 raise RuntimeError(f"LLM request timed out after {timeout}s on model '{active_model}'.") from err
             raise RuntimeError(f"LLM Connection Error on model '{active_model}': {err.reason}") from err
-    # ---------------------------------------------------------------- parsing
+
+    def _post_chat(self, payload: dict[str, Any], timeout: int = 180,
+                   meta: dict[str, Any] | None = None) -> str:
+        """POST one chat-completions request and return the reply text. Fills
+        ``meta`` with the reply's finish_reason, usage and model when given.
+        Isolated so tests can stub transport without a network."""
+        req = urllib.request.Request(
+            f"{self.endpoint}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        choice = (data.get("choices") or [{}])[0]
+        content = ((choice.get("message") or {}).get("content") or "")
+        if meta is not None:
+            meta["finish_reason"] = choice.get("finish_reason")
+            meta["usage"] = data.get("usage") or {}
+            meta["model"] = data.get("model") or payload.get("model")
+        return content.strip()
 
     @staticmethod
     def _extract_json(text: str) -> Any:

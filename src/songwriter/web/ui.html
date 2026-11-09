@@ -1046,6 +1046,11 @@
     <div class="field-hint mb-10">Step 4 lyric critic (Auto LLM mode). Its prompt and the writing rules are editable under LLM Prompts below.</div>
     <div class="flex gap-12 flex-wrap items-start mb-10">
       <div class="field-group w-260">
+        <label class="field-label" for="set-writer-max-tokens">Writer reply budget (tokens)</label>
+        <input type="number" id="set-writer-max-tokens" min="120" max="8000" step="20">
+        <div class="field-hint">Longest reply the line writer may write. A reply cut off at this limit is retried with a bigger budget, so a short limit never loses a section. Only a cap; unused tokens cost nothing.</div>
+      </div>
+      <div class="field-group w-260">
         <label class="field-label" for="set-critic-max-tokens">Critic reply budget (tokens)</label>
         <input type="number" id="set-critic-max-tokens" min="200" max="8000" step="100">
         <div class="field-hint">Longest reply the critic may write. Too low and its verdict is cut off, so the turn is judged on engine checks only.</div>

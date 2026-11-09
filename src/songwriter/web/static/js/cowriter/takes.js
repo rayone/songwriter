@@ -24,18 +24,30 @@ function promptPanelHtml(prompt, modelName) {
       <div class="mono fs-2xs c-muted pre-wrap max-h-200 scroll-y lh-14 mt-4">${escapeHtml(prompt || '')}</div>
     </details>`;
 }
-function responsePanelInner(cleaned, raw, modelName) {
+function responsePanelInner(cleaned, raw, modelName, info) {
+  info = info || {};
   const rawText = (raw || '').trim();
   const cleanText = (cleaned || '').trim();
   const lines = cleanText
     ? cleanText.split('\n').map(l => `<div class="fs-md fw-600 c-bright">${escapeHtml(l)}</div>`).join('')
     : '<div class="fs-xs c-rose">No usable lyric lines in the response.</div>';
+  // One line of transport facts: whether the reply was cut off at the token
+  // limit, and the tokens it used (so "optimized" can be read, not guessed).
+  const u = info.usage || {};
+  const bits = [];
+  if (info.cut_off) bits.push('<span class="c-rose">cut off at token limit</span>');
+  if (u.completion_tokens != null) bits.push(`${u.completion_tokens} out`);
+  if (u.prompt_tokens != null) {
+    const cached = (u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || u.cached_tokens;
+    bits.push(cached ? `${u.prompt_tokens} in (${cached} cached)` : `${u.prompt_tokens} in`);
+  }
+  const meta = bits.length ? `<div class="fs-2xs c-dim mt-4">${bits.join(' · ')}</div>` : '';
   // Show the verbatim reply only when cleaning changed it, so stripped chatter is visible.
   const rawHtml = rawText && rawText !== cleanText
     ? `<details class="mt-4"><summary class="fs-2xs c-dim" style="cursor:pointer">Raw reply (before cleanup)</summary>
          <div class="mono fs-2xs c-muted pre-wrap mt-4">${escapeHtml(rawText)}</div></details>`
     : '';
-  return `<div class="turn-panel-title">${escapeHtml(modelLabel(modelName))} response</div>${lines}${rawHtml}`;
+  return `<div class="turn-panel-title">${escapeHtml(modelLabel(modelName))} response</div>${lines}${meta}${rawHtml}`;
 }
 function critiquePanelHtml(critique, modelName) {
   if (!critique) return '';
@@ -275,7 +287,8 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
         } else if (ev.type === 'response') {
           const slot = turnSlot(ev.turn_id, ev.attempt, 'response', takeId);
           if (slot) {
-            slot.innerHTML = responsePanelInner(ev.response, ev.raw, take.model);
+            slot.innerHTML = responsePanelInner(ev.response, ev.raw, ev.model || take.model,
+                                                { cut_off: ev.cut_off, usage: ev.usage });
             chatWindow.scrollTop = chatWindow.scrollHeight;
           }
         } else if (ev.type === 'validation') {
