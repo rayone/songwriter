@@ -222,6 +222,7 @@ class SongListItem(BaseModel):
     status: str = "ready"
     updated_at: str
     available_revisions: list[int] = Field(default_factory=list)
+    take_id: str = ""
 
 class SongListResponse(BaseModel):
     songs: list[SongListItem]
@@ -496,7 +497,7 @@ def health_check() -> dict[str, Any]:
     return {
         "status": "healthy",
         "version": "1.2.0",
-        "contract_version": 1,
+        "contract_version": 4,
         "total_songs": cnt,
         "storage": {
             "data_dir": str(config.DATA_DIR),
@@ -549,46 +550,73 @@ def list_songs(
 
         where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         if all_revisions:
-            sql = """
-                SELECT r.song_id, r.revision, r.created_at, r.generation
-                FROM song_revisions r
-                ORDER BY r.created_at DESC, r.song_id DESC, r.revision DESC
+            # Paginate at the SONG level so a song's takes are never split across the row
+            # limit. Pick the most-recently-touched `limit` songs, then return every take of
+            # exactly those songs. This keeps available_revisions complete per song and
+            # guarantees no take is silently dropped mid-song.
+            song_rows = con.execute(
+                """
+                SELECT song_id, max(created_at) AS last_at
+                FROM song_revisions
+                GROUP BY song_id
+                ORDER BY last_at DESC, song_id DESC
                 LIMIT ?
-            """
-            params = [limit + 1]
-            rev_rows = con.execute(sql, params).fetchall()
-            effective_rows = rev_rows[:limit]
-            has_more = len(rev_rows) > limit
+                """,
+                [limit + 1],
+            ).fetchall()
+            has_more = len(song_rows) > limit
+            page_sids = [s[0] for s in song_rows[:limit]]
             songs: list[SongListItem] = []
-            for r in effective_rows:
-                sid, rev, dt, gen_val = r
-                g = json.loads(gen_val) if isinstance(gen_val, str) else gen_val
-                dt_iso = to_utc_iso(dt)
-                vocal = g.get("vocal") or g.get("vocal_style") or ""
-                style_prompt = g.get("style_prompt") or ""
-                inst = is_instrumental(vocal, style_prompt)
-                dur = estimate_duration_sec(g.get("lyrics") or "", int(round(g.get("bpm") or g.get("tempo_bpm") or 118)))
-                songs.append(SongListItem(
-                    id=sid,
-                    revision=rev,
-                    title=g.get("title") or "Untitled Song",
-                    summary=g.get("brief") or g.get("prompt") or (g.get("lyrics", "")[:100]),
-                    genre=g.get("genre") or "Pop",
-                    subgenre=g.get("subgenre") or "",
-                    language="English",
-                    instrumental=inst,
-                    duration_hint_sec=dur,
-                    bpm=int(round(g.get("bpm") or g.get("tempo_bpm") or 118)),
-                    key=f"{g.get('key') or 'C'} {g.get('scale') or 'major'}".strip(),
-                    scale=g.get("scale") or "major",
-                    time_signature=g.get("time_signature") or "4/4",
-                    has_abc=bool(g.get("abc_score")),
-                    status="ready",
-                    updated_at=dt_iso,
-                    available_revisions=[rev],
-                ))
-            return SongListResponse(songs=songs, next_cursor=None)
-
+            next_cursor = None
+            if page_sids:
+                placeholders = ", ".join("?" for _ in page_sids)
+                take_rows = con.execute(
+                    f"""
+                    SELECT song_id, revision, created_at, generation
+                    FROM song_revisions
+                    WHERE song_id IN ({placeholders})
+                    ORDER BY created_at DESC, song_id DESC, revision DESC
+                    """,
+                    page_sids,
+                ).fetchall()
+                # Full take list per song (every take of the paged songs, newest first).
+                rev_map: dict[str, list[int]] = {}
+                for sid_rev, r_num in con.execute(
+                    f"SELECT song_id, revision FROM song_revisions WHERE song_id IN ({placeholders}) ORDER BY song_id, revision DESC",
+                    page_sids,
+                ).fetchall():
+                    rev_map.setdefault(sid_rev, []).append(r_num)
+                for sid, rev, dt, gen_val in take_rows:
+                    g = json.loads(gen_val) if isinstance(gen_val, str) else gen_val
+                    dt_iso = to_utc_iso(dt)
+                    vocal = g.get("vocal") or g.get("vocal_style") or ""
+                    style_prompt = g.get("style_prompt") or ""
+                    inst = is_instrumental(vocal, style_prompt)
+                    dur = estimate_duration_sec(g.get("lyrics") or "", int(round(g.get("bpm") or g.get("tempo_bpm") or 118)))
+                    songs.append(SongListItem(
+                        id=sid,
+                        revision=rev,
+                        take_id=f"{sid}:{rev}",
+                        title=g.get("title") or "Untitled Song",
+                        summary=g.get("brief") or g.get("prompt") or (g.get("lyrics", "")[:100]),
+                        genre=g.get("genre") or "Pop",
+                        subgenre=g.get("subgenre") or "",
+                        language="English",
+                        instrumental=inst,
+                        duration_hint_sec=dur,
+                        bpm=int(round(g.get("bpm") or g.get("tempo_bpm") or 118)),
+                        key=f"{g.get('key') or 'C'} {g.get('scale') or 'major'}".strip(),
+                        scale=g.get("scale") or "major",
+                        time_signature=g.get("time_signature") or "4/4",
+                        has_abc=bool(g.get("abc_score")),
+                        status="ready",
+                        updated_at=dt_iso,
+                        available_revisions=rev_map.get(sid, [rev]),
+                    ))
+                if has_more:
+                    last_sid, last_at = song_rows[limit - 1]
+                    next_cursor = encode_cursor(last_at, last_sid)
+            return SongListResponse(songs=songs, next_cursor=next_cursor)
 
         sql = f"""
             SELECT id, COALESCE(revision, 1) AS revision, title, brief, genre, subgenre,
@@ -631,6 +659,7 @@ def list_songs(
             songs.append(SongListItem(
                 id=sid,
                 revision=rev,
+                take_id=f"{sid}:{rev}",
                 title=title or "Untitled Song",
                 summary=brief or prompt or (lyrics[:100] if lyrics else ""),
                 genre=g or "Pop",
