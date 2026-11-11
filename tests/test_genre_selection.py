@@ -7,6 +7,8 @@ import pytest
 
 from songwriter.ai.cowriter import SongwriterCowriter
 from songwriter.ai.generation import SongGeneration
+from songwriter.corpus.references import ReferenceStore
+from songwriter.db import Database
 
 
 @pytest.fixture
@@ -96,7 +98,13 @@ def test_niche_corpus_songs_rank_above_curated_pop(cowriter, tmp_path, genre):
                    [i + 1, f'Track {i}', 'An independent artist', label, label, 'C', 'major', 'Original lyric ' * 10])
     db.close()
     cowriter.studio_db = SimpleNamespace(db_path=path, is_available=True)
-    cowriter._wb = SimpleNamespace(searcher=SimpleNamespace(abc_song_ids=lambda: set()), search_songs=lambda *a, **k: [])
+    cowriter._wb = SimpleNamespace(
+        searcher=SimpleNamespace(
+            abc_song_ids=lambda: set(),
+            references=ReferenceStore(Database.get(tmp_path / 'workbench.duckdb', read_only=False)),
+        ),
+        search_songs=lambda *a, **k: [],
+    )
     results = cowriter.recommend_reference_songs(genre=genre, bpm=120, key='C', limit=4)
     assert results[0]['genre'] == genre
     assert results[0]['title'] == 'Track 1'

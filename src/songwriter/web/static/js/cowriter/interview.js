@@ -61,6 +61,7 @@ function questionsContextKey() {
   const ref = state.referenceSong || {};
   return [
     ref.id || ((ref.title || '') + '|' + (ref.artist || '')),
+    state.referenceRevision,
     val('gw-prompt') || '',
     val('gw-storyline-text') || state.storyline || '',
     requestedGenre(),

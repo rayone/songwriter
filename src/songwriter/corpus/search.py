@@ -15,6 +15,7 @@ import duckdb
 
 from songwriter.phonetics.core import Phonetics, scan_line
 from songwriter.craft.stats import VOCABLE_TAGS
+from songwriter.corpus.references import ReferenceStore, normalize_identity
 
 from songwriter.config import CORPUS_DB as DEFAULT_APP_DB, SONGS_PARQUET as DEFAULT_SONGS, DATA_DIR
 RAW_PARQUET = DEFAULT_SONGS if DEFAULT_SONGS.exists() else DATA_DIR / "raw" / "train-*.parquet"
@@ -128,9 +129,11 @@ class SongSearcher:
     """High-performance song search and retrieval over the 3.18M Genius dataset."""
 
     def __init__(self, parquet_glob: str | Path = RAW_PARQUET,
-                 sqlite_path: str | Path = SQLITE_DB) -> None:
+                 sqlite_path: str | Path = SQLITE_DB,
+                 reference_store: ReferenceStore | None = None) -> None:
         self.parquet_glob = str(parquet_glob)
         self.sqlite_path = Path(sqlite_path)
+        self.references = reference_store if reference_store is not None else ReferenceStore()
         self._ph = Phonetics()
         self._abc_col: bool | None = None
 
@@ -217,16 +220,17 @@ class SongSearcher:
                 clauses.append(f"(genre = '{g_esc}' OR tag = '{g_esc}')")
             else:
                 clauses.append(f"tag = '{g_esc}'")
+        if year_min is not None:
             clauses.append(f"year >= {int(year_min)}")
         if year_max is not None:
             clauses.append(f"year <= {int(year_max)}")
         has_abc = self._has_abc_column()
-        if has_midi and has_abc:
-            clauses.append("abc_score IS NOT NULL AND abc_score <> ''")
+        if has_midi:
+            clauses.append("abc_score IS NOT NULL AND abc_score <> ''" if has_abc else "FALSE")
 
         where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        artist_match = " OR ".join(f"artist ILIKE '%{t.replace('\'', '\'\'')}%'" for t in terms)
-        title_match = " OR ".join(f"title ILIKE '%{t.replace('\'', '\'\'')}%'" for t in terms)
+        artist_match = " OR ".join(f"artist ILIKE '%{t.replace('\'', '\'\'')}%'" for t in terms) or "FALSE"
+        title_match = " OR ".join(f"title ILIKE '%{t.replace('\'', '\'\'')}%'" for t in terms) or "FALSE"
         cross_match = " AND ".join(f"(title ILIKE '%{w.replace('\'', '\'\'')}%' OR artist ILIKE '%{w.replace('\'', '\'\'')}%')" for w in words) if len(words) > 1 else "1=0"
 
         if search_by == "artist":
@@ -314,7 +318,24 @@ class SongSearcher:
                 results = self._search_sqlite(q, search_by, limit)
             else:
                 results = []
-        return results
+        imported = [] if has_midi else self.references.search(
+            query=q, search_by=search_by, genre=genre,
+            year_min=year_min, year_max=year_max, limit=limit,
+        )
+        local = [
+            SongSummary(
+                title=r["title"], artist=r["artist"], genre=r["genre"], year=r["year"],
+                line_count=r["line_count"], word_count=r["word_count"], section_count=r["section_count"],
+                lyrics_preview=r["preview"].replace("\n", " ")[:140],
+                song_id=r["id"], tempo_bpm=r["tempo_bpm"], musical_key=r["musical_key"], scale=r["scale"],
+            )
+            for r in imported
+        ]
+        identities = {(normalize_identity(r.artist), normalize_identity(r.title)) for r in local}
+        return (local + [
+            r for r in results
+            if (normalize_identity(r.artist), normalize_identity(r.title)) not in identities
+        ])[:limit]
 
     def _search_sqlite(self, query: str, search_by: str, limit: int) -> list[SongSummary]:
         con = sqlite3.connect(f"file:{self.sqlite_path}?mode=ro", uri=True)
@@ -346,6 +367,22 @@ class SongSearcher:
     def get_song(self, title: str | None = None, artist: str | None = None,
                  song_id: int | None = None) -> SongDetail | None:
         """Fetch full song lyrics and structure."""
+        imported = None
+        if song_id is not None and song_id < 0:
+            imported = self.references.get_song_by_id(song_id)
+            if imported is None:
+                return None
+        elif song_id is None:
+            imported = self.references.get_song_by_identity(title=title, artist=artist)
+        if imported is not None:
+            song = self._parse_song(
+                imported["title"], imported["artist"], imported["genre"], imported["year"],
+                imported["lyrics"], imported["id"], tempo_bpm=imported["tempo_bpm"],
+                musical_key=imported["musical_key"], scale=imported["scale"],
+                word_count=imported["word_count"],
+            )
+            song.has_bridge = any(section.kind == "bridge" for section in song.sections)
+            return song
         row = None
         is_consolidated = "songs.parquet" in self.parquet_glob
         tag_col = "genre" if is_consolidated else "tag"

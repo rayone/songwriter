@@ -48,7 +48,7 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 
 ## 3. Features
 
-* **Interactive Web Studio:** Full-featured browser UI for drafting songs, analyzing lyric takes, inspecting line-by-line metrics, and exploring reference blueprints.
+* **Interactive Web Studio:** Full-featured browser UI for drafting songs, analyzing lyric takes, inspecting line-by-line metrics, and exploring reference blueprints. Add or update references by pasting lyrics or importing a JSON batch.
 * **16 Distinct Rhyme Categories:** Filter and rank rhymes by syllable count, corpus frequency, phonetic strength, register tags (slang, poetic, vulgar), and emotional alignment.
 * **Cadence & Meter Diagnostics:** Real-time feedback on average syllable counts, variance, cadence consistency, and rhythm grid alignment.
 * **Cliché Detection:** Identifies overused phrasing windows and predictable rhyme pairs backed by real-world corpus statistics.
@@ -121,6 +121,44 @@ This project has **two independent version streams**, and the GitHub Releases pa
    ```sh
    uv run python -m songwriter.mcp.server
    ```
+
+### Adding or updating reference songs
+
+In **Cowriter → Step 2: Reference & Specs**, search for the artist first. To add
+Mr.Kitty songs that are missing, expand **Add / update references**, enter
+**Mr.Kitty**, the song title, and its lyrics, then click **Save Reference Song**.
+Click **Select Reference** on the resulting card to use its blueprint. Keep
+`[Verse]`, `[Chorus]`, and other section headings in the lyrics when available.
+
+Genre, year, BPM, key, and scale are optional. Supply known values rather than
+guessing: unspecified music metadata stays unspecified in the inspector.
+Recommendations can match imported tracks when their BPM is supplied; selecting
+a track manually does not require BPM. Generation can still use its usual
+production defaults. Importing lyrics does not extract audio, chords, or MIDI.
+
+For an artist's catalog, use **Download Example JSON**, replace the example with
+your songs, choose the file, then click **Import JSON Batch**. The file is a JSON
+array of up to 200 objects. Required keys: `title`, `artist`, `lyrics`. Optional
+keys: `genre`, `year`, `tempo_bpm`, `musical_key`, `scale`. Lyrics are limited to
+100,000 characters per song. This is a supplied-lyrics import, not an automatic
+artist downloader.
+
+Reimporting the same artist and title (ignoring case and repeated whitespace)
+replaces that imported record's lyrics and metadata without changing its ID.
+Omitted optional metadata resets to unspecified (`misc` genre, `0` year).
+Invalid batches save nothing. The search shows matches for the first imported
+artist; other imported artists can be searched normally.
+
+Imports are saved in **`workbench.duckdb`**, separately from the bundled corpus,
+and become searchable and selectable immediately, without a restart or corpus
+rebuild. They survive application and corpus updates when the data directory is
+persistent; include `workbench.duckdb` in backups. They extend the reference
+library, not the bundled word-frequency/rhyme statistics.
+
+The same authenticated REST API is available at
+`POST /api/references/import`, with body `{"songs": [song objects]}`. It returns
+`added`, `updated`, `total`, and `song_ids`; imported IDs are negative and work
+with the existing song-detail and blueprint endpoints.
 
 ---
 

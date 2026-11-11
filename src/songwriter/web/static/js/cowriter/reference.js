@@ -3,14 +3,16 @@
 // ------------------------------------------------ Step 2: Unified Song Card Renderer, Recommendations & Live Search
 function renderSongCard(s, isRecommendation = false) {
   const sub = (s.year ? s.year + ' • ' : '') +
-              (s.preview ? s.preview.replace(/\n+/g, ' / ').slice(0, 85) + '...' : 'Available in 3.18M corpus');
+              (s.preview ? s.preview.replace(/\n+/g, ' / ').slice(0, 85) + '...' : 'Reference track');
   const bpmBadge = s.bpm ? `<span class="badge badge-warning badge-xs">${Math.round(s.bpm)} BPM</span>` : '';
   const keyBadge = s.key ? `<span class="badge badge-secondary badge-xs">${escapeHtml(s.key)}${s.scale ? ' ' + escapeHtml(s.scale) : ''}</span>` : '';
   const yearBadge = s.year ? `<span class="badge badge-dim badge-xs">${s.year}</span>` : '';
   const midiBadge = s.has_midi ? `<span class="badge badge-success badge-xs" title="Imported MIDI: YuE2 ABC score available">♪ MIDI</span>` : '';
+  const importedBadge = s.song_id < 0 ? '<span class="badge badge-info badge-xs">Imported</span>' : '';
   const guidanceHtml = s.guidance
     ? `<div class="ref-choice-guidance mt-8">${escapeHtml(s.guidance)}</div>`
-    : `<div class="ref-choice-guidance mt-8 c-muted fs-xs">Live corpus reference track</div>`;
+    : `<div class="ref-choice-guidance mt-8 c-muted fs-xs">${s.song_id < 0 ? 'Imported' : 'Corpus'} reference track</div>`;
+  const selectAction = 'selectReferenceSong(' + JSON.stringify(s.song_id ?? null) + ', ' + JSON.stringify(s.title || '') + ', ' + JSON.stringify(s.artist || '') + ')';
 
   return `
     <div class="card">
@@ -26,13 +28,14 @@ function renderSongCard(s, isRecommendation = false) {
             ${keyBadge}
             ${yearBadge}
             ${midiBadge}
+            ${importedBadge}
           </div>
         </div>
         ${guidanceHtml}
         <div class="fs-xs c-muted mt-6 lh-14">${escapeHtml(sub)}</div>
       </div>
       <div class="flex gap-8 items-center mt-8">
-        <button type="button" class="btn-primary btn-sm" onclick="selectReferenceSong(${s.song_id}, '${escapeHtml(s.title)}', '${escapeHtml(s.artist)}')">Select Reference</button>
+        <button type="button" class="btn-primary btn-sm" onclick="${escapeHtml(selectAction)}">Select Reference</button>
         <a href="https://www.youtube.com/results?search_query=${encodeURIComponent(s.title + ' ' + s.artist)}" target="_blank" rel="noopener noreferrer" class="btn-secondary btn-sm">Listen on YouTube ↗</a>
       </div>
     </div>
@@ -41,7 +44,7 @@ function renderSongCard(s, isRecommendation = false) {
 async function loadReferenceRecommendations() {
   const grid = el('gw-recommendations-grid');
   if (!grid) return;
-  grid.innerHTML = '<div class="empty-state">Finding best reference matches from 3.18M corpus...</div>';
+  grid.innerHTML = '<div class="empty-state">Finding reference matches...</div>';
   try {
     const bpmVal = parseInt(val('gw-bpm'), 10) || (state.defaults && state.defaults.bpm) || null;
     const keyVal = val('gw-key') || (state.defaults && state.defaults.music_key) || null;
@@ -94,7 +97,7 @@ async function searchReferenceSongs() {
     if (statusEl) statusEl.innerText = 'Please enter a song or artist name to search.';
     return;
   }
-  if (statusEl) statusEl.innerText = 'Searching 3.18M songs in corpus...';
+  if (statusEl) statusEl.innerText = 'Searching reference songs...';
   if (resultsGrid) resultsGrid.style.display = 'grid';
   try {
     const hasMidi = el('gw-ref-has-midi') && el('gw-ref-has-midi').checked;
@@ -222,41 +225,41 @@ function renderSelectedReference(bp) {
   if (metaEl) {
     const albumStr = ref.album ? ' • Album: ' + ref.album : '';
     const durStr = ref.duration_sec ? ' • Duration: ' + Math.round(ref.duration_sec) + 's' : '';
-    metaEl.innerText = (ref.artist || 'Unknown') + albumStr + ' • Year: ' + (ref.year || '2020') + durStr;
+    metaEl.innerText = (ref.artist || 'Unknown') + albumStr + (ref.year ? ' • Year: ' + ref.year : ' • Year unspecified') + durStr;
   }
 
   const badgesEl = el('insp-ref-badges');
   if (badgesEl) {
     badgesEl.innerHTML = `
       <span class="badge badge-info">${escapeHtml(ref.genre || 'Music')}</span>
-      <span class="badge badge-warning">${Math.round(ref.tempo_bpm || 118)} BPM</span>
-      <span class="badge badge-secondary">${escapeHtml(ref.musical_key || 'C')} ${escapeHtml(ref.scale || 'major')}</span>
-      <span class="badge badge-dim">${escapeHtml(ref.time_signature || '4/4')}</span>
-      <span class="badge badge-info">${escapeHtml(ref.melodic_contour || 'wave')}</span>
+      <span class="badge badge-warning">${ref.tempo_bpm ? Math.round(ref.tempo_bpm) + ' BPM' : 'BPM unspecified'}</span>
+      <span class="badge badge-secondary">${escapeHtml([ref.musical_key, ref.scale].filter(Boolean).join(' ') || 'Key unspecified')}</span>
+      <span class="badge badge-dim">${escapeHtml(ref.time_signature || 'Meter unspecified')}</span>
+      <span class="badge badge-info">${escapeHtml(ref.melodic_contour || 'Contour unavailable')}</span>
       ${ref.is_duet ? '<span class="badge badge-duet">Duet Arrangement</span>' : '<span class="badge badge-info">Solo Vocal</span>'}
-      <span class="badge badge-success">Verified Corpus Track</span>
+      <span class="badge badge-success">${ref.id < 0 ? 'Imported Reference' : 'Corpus Track'}</span>
     `;
   }
 
   // Pane 1: Overview & Specs
-  const bpmVal = Math.round(ref.tempo_bpm || 118);
+  const bpmVal = ref.tempo_bpm ? Math.round(ref.tempo_bpm) : null;
   const bpmEl = el('spec-bpm');
-  if (bpmEl) bpmEl.innerText = bpmVal + ' BPM';
-  const bpmPct = Math.min(100, Math.max(10, Math.round(((bpmVal - 40) / 160) * 100)));
+  if (bpmEl) bpmEl.innerText = bpmVal == null ? 'Unspecified' : bpmVal + ' BPM';
+  const bpmPct = bpmVal == null ? 0 : Math.min(100, Math.max(10, Math.round(((bpmVal - 40) / 160) * 100)));
   const bpmBar = el('spec-bpm-bar');
   if (bpmBar) bpmBar.style.width = bpmPct + '%';
 
   const keyEl = el('spec-key');
-  if (keyEl) keyEl.innerText = (ref.musical_key || 'C') + ' ' + (ref.scale || 'major');
+  if (keyEl) keyEl.innerText = [ref.musical_key, ref.scale].filter(Boolean).join(' ') || 'Unspecified';
   const timesigEl = el('spec-timesig');
-  if (timesigEl) timesigEl.innerText = (ref.time_signature || '4/4') + ' meter';
+  if (timesigEl) timesigEl.innerText = ref.time_signature ? ref.time_signature + ' meter' : 'Unspecified';
   const contourEl = el('spec-contour');
-  if (contourEl) contourEl.innerText = (ref.melodic_contour || 'wave').toUpperCase();
+  if (contourEl) contourEl.innerText = (ref.melodic_contour || 'Unavailable').toUpperCase();
 
   const vLow = ref.vocal_range_low;
   const vHigh = ref.vocal_range_high;
   const vrEl = el('spec-vocal-range');
-  if (vrEl) vrEl.innerText = (vLow && vHigh) ? `Vocal: ${vLow} - ${vHigh}` : 'Vocal: ~2 Octaves';
+  if (vrEl) vrEl.innerText = (vLow && vHigh) ? `Vocal: ${vLow} - ${vHigh}` : 'Vocal range unavailable';
 
   const planEl = el('spec-plan');
   if (planEl) planEl.innerText = (bp.suggested_specs?.section_plan || 'standard').toUpperCase();
@@ -264,58 +267,43 @@ function renderSelectedReference(bp) {
   if (secCntEl) secCntEl.innerText = (ref.sections ? ref.sections.length : 0) + ' structured sections';
 
   // Audio Feature Meters
-  const dnc = ref.danceability != null ? ref.danceability : 0.55;
-  const nrg = ref.energy != null ? ref.energy : 0.65;
-  const val_ = ref.valence != null ? ref.valence : 0.50;
-  const aco = ref.acousticness != null ? ref.acousticness : 0.20;
-  const loud = ref.loudness != null ? ref.loudness : -7.5;
-  const spch = ref.speechiness != null ? ref.speechiness : 0.05;
-
-  if (el('meter-dance')) el('meter-dance').innerText = Math.round(dnc * 100) + '%';
-  if (el('bar-dance')) el('bar-dance').style.width = Math.round(dnc * 100) + '%';
-
-  if (el('meter-energy')) el('meter-energy').innerText = Math.round(nrg * 100) + '%';
-  if (el('bar-energy')) el('bar-energy').style.width = Math.round(nrg * 100) + '%';
-
-  if (el('meter-valence')) el('meter-valence').innerText = Math.round(val_ * 100) + '%';
-  if (el('bar-valence')) el('bar-valence').style.width = Math.round(val_ * 100) + '%';
-
-  if (el('meter-acoustic')) el('meter-acoustic').innerText = Math.round(aco * 100) + '%';
-  if (el('bar-acoustic')) el('bar-acoustic').style.width = Math.round(aco * 100) + '%';
-
-  if (el('meter-loudness')) el('meter-loudness').innerText = (typeof loud === 'number' ? loud.toFixed(1) : loud) + ' dB';
-  const loudPct = Math.min(100, Math.max(10, Math.round(((Number(loud) + 24) / 24) * 100)));
-  if (el('bar-loudness')) el('bar-loudness').style.width = loudPct + '%';
-
-  if (el('meter-speech')) el('meter-speech').innerText = Math.round(spch * 100) + '%';
-  if (el('bar-speech')) el('bar-speech').style.width = Math.min(100, Math.round(spch * 300)) + '%';
+  for (const [field, id, multiplier] of [
+    ['danceability', 'dance', 1], ['energy', 'energy', 1], ['valence', 'valence', 1],
+    ['acousticness', 'acoustic', 1], ['speechiness', 'speech', 3],
+  ]) {
+    const value = ref[field];
+    if (el('meter-' + id)) el('meter-' + id).innerText = value == null ? 'Unavailable' : Math.round(value * 100) + '%';
+    if (el('bar-' + id)) el('bar-' + id).style.width = (value == null ? 0 : Math.min(100, Math.round(value * multiplier * 100))) + '%';
+  }
+  if (el('meter-loudness')) el('meter-loudness').innerText = ref.loudness == null ? 'Unavailable' : Number(ref.loudness).toFixed(1) + ' dB';
+  if (el('bar-loudness')) el('bar-loudness').style.width = (ref.loudness == null ? 0 : Math.min(100, Math.max(0, ((ref.loudness + 24) / 24) * 100))) + '%';
 
   // Chords & Roman Numerals
   const chordsList = el('insp-chords-list');
   if (chordsList) {
-    const chs = (ref.chords && ref.chords.length) ? ref.chords : ['C', 'G', 'Am', 'F'];
-    chordsList.innerHTML = chs.map(c => `<span class="badge badge-warning">${escapeHtml(c)}</span>`).join('');
+    const chs = ref.chords || [];
+    chordsList.innerHTML = chs.length ? chs.map(c => `<span class="badge badge-warning">${escapeHtml(c)}</span>`).join('') : 'Not supplied';
   }
   const romEl = el('insp-roman-numerals');
   if (romEl) {
-    const roms = (ref.roman_numerals && ref.roman_numerals.length) ? ref.roman_numerals : (ref.scale === 'minor' ? ['i', 'VI', 'III', 'VII'] : ['I', 'V', 'vi', 'IV']);
-    romEl.innerText = 'Harmonic Progression: ' + roms.join(' - ');
+    const roms = ref.roman_numerals || [];
+    romEl.innerText = 'Harmonic Progression: ' + (roms.length ? roms.join(' - ') : 'Not supplied');
   }
 
   // Sensory & Mood
   const sensEl = el('insp-sensory-info');
   if (sensEl) {
-    const cVal = ref.mean_concreteness ? Number(ref.mean_concreteness) : 2.85;
-    const cPct = Math.min(100, Math.max(10, Math.round((cVal / 5.0) * 100)));
-    const cTier = cVal >= 3.5 ? 'Highly Sensory / Tangible Objects' : (cVal >= 2.5 ? 'Balanced Pop & Narrative' : 'Abstract / Emotional Reflection');
+    const cVal = ref.mean_concreteness == null ? null : Number(ref.mean_concreteness);
+    const cPct = cVal == null ? 0 : Math.min(100, Math.max(10, Math.round((cVal / 5.0) * 100)));
+    const cTier = cVal == null ? 'No rated lyric words' : (cVal >= 3.5 ? 'Highly Sensory / Tangible Objects' : (cVal >= 2.5 ? 'Balanced Pop & Narrative' : 'Abstract / Emotional Reflection'));
     sensEl.innerHTML = `
       <div class="flex justify-between items-center mb-4">
-        <span><b>Dominant Emotion:</b> <span class="c-cyan fw-700">${escapeHtml(ref.dominant_emotion || 'Introspective')}</span></span>
-        <span class="fs-2xs c-dim uppercase">Modality: ${escapeHtml(ref.dominant_modality || 'action')}</span>
+        <span><b>Dominant Emotion:</b> <span class="c-cyan fw-700">${escapeHtml(ref.dominant_emotion || 'Unavailable')}</span></span>
+        <span class="fs-2xs c-dim uppercase">Modality: ${escapeHtml(ref.dominant_modality || 'Unavailable')}</span>
       </div>
       <div class="mt-6 mb-2">
         <div class="flex justify-between fs-xs">
-          <span><b>Concreteness:</b> <span class="c-emerald fw-800">${cVal.toFixed(2)}</span> / 5.0 Max</span>
+          <span><b>Concreteness:</b> <span class="c-emerald fw-800">${cVal == null ? 'Unavailable' : cVal.toFixed(2)}</span> / 5.0 Max</span>
           <span class="c-muted fs-xs">${cTier}</span>
         </div>
         <div class="progress-bar mt-3">
@@ -389,4 +377,129 @@ function applyBlueprintSpecs(bp) {
     if (s.vocal_roles.singer_a) el('gw-singer-a').value = s.vocal_roles.singer_a;
     if (s.vocal_roles.singer_b) el('gw-singer-b').value = s.vocal_roles.singer_b;
   }
+}
+
+// ------------------------------------------------ Reference library imports
+let referenceImportBusy = false;
+let referenceImportBatch = null;
+
+function resetReferenceImportForm() {
+  if (referenceImportBusy) return;
+  for (const name of ['artist', 'title', 'lyrics', 'genre', 'year', 'bpm', 'key', 'scale']) {
+    el('ref-import-' + name).value = '';
+  }
+  el('ref-import-file-input').value = '';
+  el('ref-import-file-name').innerText = 'No file chosen';
+  referenceImportBatch = null;
+  el('ref-import-batch-btn').disabled = true;
+  setStatus('ref-import-status', '', '');
+}
+
+async function submitSingleReferenceImport() {
+  if (referenceImportBusy) return;
+  for (const name of ['artist', 'title', 'lyrics', 'genre', 'year', 'bpm', 'key', 'scale']) {
+    if (!el('ref-import-' + name).reportValidity()) return;
+  }
+  const song = {artist: val('ref-import-artist').trim(), title: val('ref-import-title').trim(), lyrics: val('ref-import-lyrics').trim()};
+  for (const [field, id] of [['genre', 'genre'], ['year', 'year'], ['tempo_bpm', 'bpm'], ['musical_key', 'key'], ['scale', 'scale']]) {
+    const value = val('ref-import-' + id).trim();
+    if (value) song[field] = ['year', 'tempo_bpm'].includes(field) ? Number(value) : value;
+  }
+  await saveReferenceImport([song]);
+}
+
+async function onReferenceJsonFileSelected(input) {
+  referenceImportBatch = null;
+  el('ref-import-batch-btn').disabled = true;
+  const file = input.files[0];
+  el('ref-import-file-name').innerText = file ? file.name : 'No file chosen';
+  if (!file) return;
+  try {
+    const records = JSON.parse(await file.text());
+    if (input.files[0] !== file) return;
+    if (!Array.isArray(records) || !records.length || records.length > 200) {
+      throw new Error('JSON must be an array of 1–200 song objects.');
+    }
+    referenceImportBatch = records;
+    el('ref-import-batch-btn').disabled = referenceImportBusy;
+    setStatus('ref-import-status', records.length + ' songs loaded. Click Import JSON Batch to save.', '');
+  } catch (err) {
+    if (input.files[0] === file) setStatus('ref-import-status', 'Could not read JSON: ' + err.message, 'red');
+  }
+}
+
+async function submitBulkReferenceImport() {
+  if (referenceImportBatch) await saveReferenceImport(referenceImportBatch);
+}
+
+async function saveReferenceImport(songs) {
+  if (referenceImportBusy) return;
+  referenceImportBusy = true;
+  const controls = ['save-btn', 'reset-btn', 'choose-file-btn', 'file-input', 'batch-btn'];
+  controls.forEach(id => { el('ref-import-' + id).disabled = true; });
+  setStatus('ref-import-status', 'Saving reference songs...', '');
+  let result;
+  try {
+    const response = await fetch('/api/references/import', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({songs}),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      const detail = Array.isArray(data.detail)
+        ? data.detail.map(item => (item.loc || []).join('.') + ': ' + item.msg).join('; ')
+        : data.detail;
+      throw new Error(detail || 'HTTP ' + response.status);
+    }
+    result = data;
+    const activeId = state.referenceSong?.id;
+    if (activeId < 0 && result.song_ids.includes(activeId)) {
+      state.referenceRevision++;
+      invalidateQuestions();
+      try {
+        const bp = await getJSON('/api/ai/blueprint?song_id=' + encodeURIComponent(activeId));
+        if (state.referenceSong?.id === activeId) {
+          state.activeBlueprint = bp;
+          state.referenceSong = bp.reference_song;
+          renderSelectedReference(bp);
+          applyBlueprintSpecs(bp);
+          updateStepperUI();
+        }
+      } catch (err) {
+        if (state.referenceSong?.id === activeId) clearSelectedReference();
+        throw new Error('Saved, but the active blueprint could not refresh: ' + err.message + '. Select it again.');
+      }
+    }
+    el('gw-ref-has-midi').checked = false;
+    el('gw-ref-search-input').value = songs[0].artist;
+    el('gw-recommendations-section').style.display = 'none';
+    clearTimeout(refSearchTimer);
+    await Promise.all([loadDatabaseStats(), loadReferenceRecommendations(), searchReferenceSongs()]);
+    setStatus('ref-import-status', result.added + ' added, ' + result.updated + ' updated; ' + result.total +
+      ' imported references saved. Showing matches for ' + songs[0].artist + '. No MIDI score is created.', 'green');
+  } catch (err) {
+    setStatus('ref-import-status', (result ? 'References saved. ' : 'Import failed: ') + err.message, 'red');
+  } finally {
+    referenceImportBusy = false;
+    controls.forEach(id => { el('ref-import-' + id).disabled = id === 'batch-btn' && !referenceImportBatch; });
+  }
+}
+
+function downloadSampleReferenceJson() {
+  const songs = [{
+    title: 'City Windows', artist: 'Example Artist',
+    lyrics: `[Verse]
+A lantern in the window glows
+The last train takes the long way home
+
+[Chorus]
+Leave one light above the door
+I will find the road once more`,
+    genre: 'synth-pop', year: 2024, tempo_bpm: 120, musical_key: 'G', scale: 'minor',
+  }];
+  const url = URL.createObjectURL(new Blob([JSON.stringify(songs, null, 2)], {type: 'application/json'}));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'reference-songs.example.json';
+  link.click();
+  URL.revokeObjectURL(url);
 }

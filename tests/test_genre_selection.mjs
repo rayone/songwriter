@@ -68,6 +68,20 @@ test('interview receives genre and template; stale genre replies are ignored', a
   assert.equal(c.state.questions.length, 0);
 });
 
+test('updating an imported reference discards its in-flight producer questions', async () => {
+  const { c } = harness();
+  c.state.referenceSong = { id: -1, title: 'City Windows', genre: 'Darkwave' };
+  let resolve;
+  c.postJSON = () => new Promise(r => { resolve = r; });
+  const loading = c.loadInterviewQuestions();
+  c.state.referenceRevision++;
+  c.invalidateQuestions();
+  resolve({ questions: [{ id: 'stale-hook', default: 'the old chorus' }] });
+  await loading;
+  assert.equal(c.state.questions.find(q => q.id === 'stale-hook'), undefined);
+  assert.equal(c.state.questionsKey, null);
+});
+
 test('genre belongs in the left creative column, including older saved interviews', () => {
   const { c, nodes } = harness();
   c.state.questions = [

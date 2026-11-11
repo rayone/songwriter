@@ -31,6 +31,7 @@ from songwriter import prompt_templates
 from songwriter.build_info import BUILD_INFO
 from songwriter.ai.cowriter import SongwriterCowriter
 from songwriter.ai.generation import SongGeneration
+from songwriter.corpus.references import ReferenceSongInput
 from songwriter.db import corpus_db
 from songwriter.lexicon.query import RhymeDB, RhymeType
 from songwriter.service import Workbench
@@ -82,6 +83,13 @@ except FileNotFoundError:
 _WORD_RE = re.compile(r"\b[a-zA-Z']+\b")
 
 # ---------------------------------------------------------------- Models
+
+class ReferenceImportRequest(BaseModel):
+    songs: list[ReferenceSongInput] = Field(
+        ..., min_length=1, max_length=200,
+        description="Songs to add or replace, matched by artist and title",
+    )
+
 
 class AnalyzeLineRequest(BaseModel):
     text: str = Field(..., description="Lyric line to analyze")
@@ -374,7 +382,7 @@ def get_song_blueprint(
             query_title = q.strip()
     bp = cowriter.blueprint_from_song(song_id=song_id, title=query_title, artist=query_artist)
     if not bp:
-        raise HTTPException(status_code=404, detail="Song not found in corpus")
+        raise HTTPException(status_code=404, detail="Song not found in reference catalog")
     return bp
 
 @app.post("/api/ai/storyline", summary="Generate 3-Act Narrative Storyline")
@@ -814,7 +822,16 @@ def rhyme_health() -> dict[str, Any]:
     }
 
 
-@app.get("/api/songs/search", summary="Search 3.18M Songs Dataset")
+@app.post("/api/references/import", summary="Add or Update Reference Songs")
+def import_references(req: ReferenceImportRequest) -> dict[str, Any]:
+    """Persist a batch separately from the bundled corpus; updates keep their IDs."""
+    try:
+        return wb.searcher.references.import_songs(req.songs)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/songs/search", summary="Search Bundled and Imported Reference Songs")
 def search_songs(
     q: str = Query("", description="Query string"),
     by: str = Query("all", enum=["all", "title", "artist", "lyrics"], description="Search field"),
@@ -859,11 +876,11 @@ def get_song(
     id_or_title: str,
     artist: str | None = Query(None, description="Artist name if querying by title")
 ) -> dict[str, Any]:
-    song_id = int(id_or_title) if id_or_title.isdigit() else None
-    title = id_or_title if not song_id else None
+    song_id = int(id_or_title) if re.fullmatch(r"-?\d+", id_or_title) else None
+    title = id_or_title if song_id is None else None
     song = wb.get_song(title=title, artist=artist, song_id=song_id)
     if not song:
-        raise HTTPException(status_code=404, detail="Song not found in corpus")
+        raise HTTPException(status_code=404, detail="Song not found in reference catalog")
 
     return {
         "title": song.title,
@@ -1214,7 +1231,7 @@ def delete_crafted_song(song_id: str) -> dict[str, Any]:
 
 @app.get("/api/stats", summary="Get Database and Corpus Statistics")
 def get_stats() -> dict[str, Any]:
-    db = corpus_db()
+    db = corpus_db() if CORPUS_DB.exists() else None
     try:
         cnt = db.read_one("SELECT count(*) FROM songs")[0]
     except Exception:
@@ -1223,7 +1240,12 @@ def get_stats() -> dict[str, Any]:
         t_cnt = db.read_one("SELECT count(*) FROM studio_templates")[0]
     except Exception:
         t_cnt = 0
-    return {"reference_songs_count": cnt, "templates_count": t_cnt}
+    imported = wb.searcher.references.count()
+    return {
+        "reference_songs_count": cnt + imported,
+        "imported_reference_songs_count": imported,
+        "templates_count": t_cnt,
+    }
 
 
 @app.get("/api/version", summary="Running application build")

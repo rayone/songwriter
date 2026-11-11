@@ -631,13 +631,13 @@ class SongwriterCowriter:
                 "tags": getattr(song, "tags", []) or [],
                 "year": song.year,
                 "duration_sec": getattr(song, "duration_sec", None),
-                "tempo_bpm": song_bpm or bpm_final,
-                "musical_key": song_key or key_final,
-                "scale": song_scale or scale_final,
-                "time_signature": getattr(song, "time_signature", "4/4") or "4/4",
+                "tempo_bpm": song_bpm,
+                "musical_key": song_key,
+                "scale": song_scale,
+                "time_signature": getattr(song, "time_signature", None),
                 "chords": chords_palette,
                 "roman_numerals": getattr(song, "roman_numerals", []) or [],
-                "melodic_contour": getattr(song, "melodic_contour", "wave") or "wave",
+                "melodic_contour": getattr(song, "melodic_contour", None),
                 "vocal_range_low": getattr(song, "vocal_range_low", None),
                 "vocal_range_high": getattr(song, "vocal_range_high", None),
                 "pitch_range_semitones": getattr(song, "pitch_range_semitones", None),
@@ -865,6 +865,9 @@ class SongwriterCowriter:
                 "genre_priority": 2 if any(term in c_genre.casefold() for term in genre_terms) else (1 if c_genre == corpus_genre else 0),
             }))
         abc_ids = self.workbench.searcher.abc_song_ids()
+        corpus_rows = [] if has_midi else self.workbench.searcher.references.get_recommendation_candidates(
+            target_bpm, genre_terms=genre_terms, corpus_genre=corpus_genre,
+        )
         try:
             db_path = self.studio_db.db_path
             if db_path.exists():
@@ -886,7 +889,7 @@ class SongwriterCowriter:
                     placeholders = ",".join("?" * len(abc_ids))
                     midi_clause = f"AND song_id IN ({placeholders})"
                     params.extend(sorted(abc_ids))
-                corpus_rows = Database.get(db_path, read_only=True).read(
+                corpus_rows.extend(Database.get(db_path, read_only=True).read(
                     f"""
                     SELECT song_id, title, artist, genre, tag, year, tempo_bpm, musical_key, scale,
                            substr(lyrics, 1, 160) AS preview,
@@ -900,47 +903,48 @@ class SongwriterCowriter:
                     LIMIT 80
                     """,
                     params,
-                )
-                for r in corpus_rows:
-                    s_id, r_title, r_artist, r_genre, r_tag, r_year, r_bpm, r_key, r_scale, r_prev, bpm_diff, genre_match = r
-                    c_key_id = f"{r_title.lower()}::{r_artist.lower()}"
-                    if c_key_id in seen_keys:
-                        continue
-                    seen_keys.add(c_key_id)
-
-                    c_score = 30.0 if genre_match == 2 else (6.0 if genre_match == 1 else 0.0)
-                    c_score += max(0.0, 5.0 - (float(bpm_diff) / 3.0))
-                    if r_key and str(r_key).upper() == target_key.upper():
-                        c_score += 3.0
-                    if r_scale and str(r_scale).lower() == target_scale.lower():
-                        c_score += 1.5
-
-                    prev_low = (r_prev or "").lower()
-                    for kw in re.findall(r"\b[a-zA-Z]{4,}\b", f"{brief} {story}".lower()):
-                        if kw in prev_low:
-                            c_score += 1.5
-
-                    g_label = r_genre or r_tag or corpus_genre
-                    guidance_text = (
-                        f"{g_label.title()} reference track: {float(r_bpm):.0f} BPM groove in "
-                        f"{r_key or target_key} {r_scale or target_scale} matching your {target_bpm:.0f} BPM specs."
-                    )
-                    scored_candidates.append((c_score, {
-                        "song_id": s_id,
-                        "title": r_title,
-                        "artist": r_artist,
-                        "year": int(r_year) if r_year else 0,
-                        "genre": g_label,
-                        "bpm": float(r_bpm) if r_bpm else target_bpm,
-                        "key": str(r_key) if r_key else target_key,
-                        "scale": str(r_scale) if r_scale else target_scale,
-                        "preview": (r_prev or "").replace("\n", " ").strip() + "...",
-                        "guidance": guidance_text,
-                        "is_curated": False,
-                        "genre_priority": int(genre_match),
-                    }))
+                ))
         except Exception:
             pass
+        for r in corpus_rows:
+            s_id, r_title, r_artist, r_genre, r_tag, r_year, r_bpm, r_key, r_scale, r_prev, bpm_diff, genre_match = r
+            c_key_id = f"{r_title.lower()}::{r_artist.lower()}"
+            if c_key_id in seen_keys:
+                continue
+            seen_keys.add(c_key_id)
+
+            c_score = 30.0 if genre_match == 2 else (6.0 if genre_match == 1 else 0.0)
+            c_score += max(0.0, 5.0 - (float(bpm_diff) / 3.0))
+            if r_key and str(r_key).upper() == target_key.upper():
+                c_score += 3.0
+            if r_scale and str(r_scale).lower() == target_scale.lower():
+                c_score += 1.5
+
+            prev_low = (r_prev or "").lower()
+            for kw in re.findall(r"\b[a-zA-Z]{4,}\b", f"{brief} {story}".lower()):
+                if kw in prev_low:
+                    c_score += 1.5
+
+            g_label = r_genre or r_tag or corpus_genre
+            guidance_text = (
+                f"{g_label.title()} reference track: {float(r_bpm):.0f} BPM groove"
+                + (f" in {r_key}" + (f" {r_scale}" if r_scale else "") if r_key else "")
+                + f" matching your {target_bpm:.0f} BPM specs."
+            )
+            scored_candidates.append((c_score, {
+                "song_id": s_id,
+                "title": r_title,
+                "artist": r_artist,
+                "year": int(r_year) if r_year else 0,
+                "genre": g_label,
+                "bpm": float(r_bpm),
+                "key": str(r_key) if r_key else None,
+                "scale": str(r_scale) if r_scale else None,
+                "preview": (r_prev or "").replace("\n", " ").strip() + "...",
+                "guidance": guidance_text,
+                "is_curated": False,
+                "genre_priority": int(genre_match),
+            }))
 
         scored_candidates.sort(key=lambda x: (x[1]["genre_priority"], x[0]), reverse=True)
         top_pool = [c for _, c in scored_candidates[:25]]

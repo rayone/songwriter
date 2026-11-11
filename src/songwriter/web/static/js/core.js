@@ -14,6 +14,7 @@ var state = {
   activeTakeId: null,
   activeBlueprint: null,
   referenceSong: null,
+  referenceRevision: 0,
   editingSongId: null,
   songs: [],
   songSort: { key: null, dir: 1 },

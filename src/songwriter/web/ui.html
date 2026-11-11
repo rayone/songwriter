@@ -220,7 +220,7 @@
         <div class="fs-lg fw-700 c-main mb-4" id="gw-search-header">
           Find Reference Track
         </div>
-        <div class="field-hint mb-10">Search 3.18M corpus songs by artist or title. Typing automatically filters results:</div>
+        <div class="field-hint mb-10">Search reference songs by artist or title. Typing automatically filters results:</div>
         <div class="flex gap-8 mb-10">
           <input type="text" id="gw-ref-search-input" placeholder="Type artist or title (e.g. Olivia Rodrigo, The Weeknd, Dua Lipa, Queen, Taylor Swift)..." oninput="onRefSearchInput(this.value)" onkeydown="if(event.key==='Enter') searchReferenceSongs()">
           <button type="button" class="btn-primary w-auto" onclick="searchReferenceSongs()">Search</button>
@@ -231,6 +231,122 @@
           Has MIDI score only
         </label>
         <div id="gw-ref-search-status" class="status-line mb-8"></div>
+
+        <!-- Expandable Add / update references panel -->
+        <details id="ref-import-panel" class="subpanel mb-12">
+          <summary class="cursor-pointer flex items-center justify-between fw-600 fs-sm c-cyan py-4">
+            <span class="flex items-center gap-6">
+              <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              Add / update references
+            </span>
+            <span class="fs-xs c-dim">Paste song or bulk JSON</span>
+          </summary>
+          <div class="mt-10">
+            <div class="field-hint mb-10">
+              User supplies lyrics; no artist-only downloading or audio/MIDI extraction is performed. Section headings like <code>[Verse 1]</code> and <code>[Chorus]</code> preserve blueprint structure and scansion. Matching artist and title updates and completely replaces an imported record; omitted optional metadata clears it.
+            </div>
+
+            <!-- Single Song Reference Form -->
+            <div class="grid grid-2 gap-12 mb-10">
+              <div class="field-group">
+                <label class="field-label" for="ref-import-artist">Artist *</label>
+                <input type="text" id="ref-import-artist" placeholder="e.g. Mr.Kitty" maxlength="240" required>
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="ref-import-title">Title *</label>
+                <input type="text" id="ref-import-title" placeholder="e.g. After Dark" maxlength="240" required>
+              </div>
+            </div>
+
+            <div class="field-group mb-10">
+              <label class="field-label" for="ref-import-lyrics">Lyrics *</label>
+              <textarea id="ref-import-lyrics" class="lyrics-area min-h-120" maxlength="100000" placeholder="[Verse 1]&#10;Paste song lyrics here...&#10;&#10;[Chorus]&#10;Headings like [Verse] or [Chorus] preserve structure." required></textarea>
+            </div>
+
+            <div class="grid grid-auto-140 gap-10 mb-10">
+              <div class="field-group">
+                <label class="field-label" for="ref-import-genre">Genre (optional)</label>
+                <input type="text" id="ref-import-genre" placeholder="default: misc" maxlength="240">
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="ref-import-year">Year (optional)</label>
+                <input type="number" id="ref-import-year" placeholder="0" min="0" max="9999">
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="ref-import-bpm">BPM (optional)</label>
+                <input type="number" id="ref-import-bpm" placeholder="e.g. 118" min="0" step="any">
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="ref-import-key">Key (optional)</label>
+                <select id="ref-import-key">
+                  <option value="">Unknown / unspecified</option>
+                  <option value="C">C</option>
+                  <option value="C#">C#</option>
+                  <option value="Db">Db</option>
+                  <option value="D">D</option>
+                  <option value="D#">D#</option>
+                  <option value="Eb">Eb</option>
+                  <option value="E">E</option>
+                  <option value="F">F</option>
+                  <option value="F#">F#</option>
+                  <option value="Gb">Gb</option>
+                  <option value="G">G</option>
+                  <option value="G#">G#</option>
+                  <option value="Ab">Ab</option>
+                  <option value="A">A</option>
+                  <option value="A#">A#</option>
+                  <option value="Bb">Bb</option>
+                  <option value="B">B</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="ref-import-scale">Scale (optional)</label>
+                <select id="ref-import-scale">
+                  <option value="">Unknown / unspecified</option>
+                  <option value="major">major</option>
+                  <option value="minor">minor</option>
+                  <option value="dorian">dorian</option>
+                  <option value="mixolydian">mixolydian</option>
+                  <option value="lydian">lydian</option>
+                  <option value="phrygian">phrygian</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="flex gap-8 items-center mb-14">
+              <button type="button" id="ref-import-save-btn" class="btn-primary w-auto" onclick="submitSingleReferenceImport()">
+                Save Reference Song
+              </button>
+              <button type="button" id="ref-import-reset-btn" class="btn-secondary w-auto" onclick="resetReferenceImportForm()">
+                Clear Inputs
+              </button>
+            </div>
+
+            <!-- Bulk JSON Import -->
+            <div class="subpanel mt-10">
+              <div class="fs-sm fw-700 c-bright mb-4">Bulk JSON Reference Import</div>
+              <div class="field-hint mb-8">
+                Upload a JSON array of up to 200 song objects (max 100,000 lyric chars each). Accepted keys: <code>title</code>, <code>artist</code>, <code>lyrics</code> (required); optional: <code>genre</code> (default misc), <code>year</code> (default 0), <code>tempo_bpm</code>, <code>musical_key</code>, <code>scale</code>. Same artist and title updates and completely replaces an imported record.
+              </div>
+              <div class="flex gap-8 items-center flex-wrap">
+                <input type="file" id="ref-import-file-input" accept=".json,application/json" class="d-none" onchange="onReferenceJsonFileSelected(this)">
+                <button type="button" id="ref-import-choose-file-btn" class="btn-secondary w-auto" onclick="el('ref-import-file-input').click()">
+                  Choose JSON File...
+                </button>
+                <span id="ref-import-file-name" class="fs-xs c-muted">No file chosen</span>
+                <button type="button" id="ref-import-batch-btn" class="btn-primary w-auto" onclick="submitBulkReferenceImport()" disabled>
+                  Import JSON Batch
+                </button>
+                <button type="button" id="ref-import-sample-btn" class="btn-secondary btn-sm" onclick="downloadSampleReferenceJson()">
+                  Download Example JSON
+                </button>
+              </div>
+            </div>
+
+            <!-- Live Status Feedback -->
+            <div id="ref-import-status" class="status-line mt-10" aria-live="polite"></div>
+          </div>
+        </details>
 
         <!-- Live Search Results Grid (shown when searching) -->
         <div id="gw-search-results-grid" class="ref-grid mh-360 scroll-y hidden"></div>

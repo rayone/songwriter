@@ -4,8 +4,8 @@ async function loadDatabaseStats() {
   try {
     const data = await getJSON('/api/stats');
     const header = el('gw-search-header');
-    if (header && data && data.reference_songs_count) {
-      header.innerText = 'Search ' + data.reference_songs_count.toLocaleString() + ' Verified Reference Songs';
+    if (header && data && data.reference_songs_count != null) {
+      header.innerText = 'Search ' + Number(data.reference_songs_count).toLocaleString() + ' Reference Songs';
     }
   } catch (e) {}
 }
