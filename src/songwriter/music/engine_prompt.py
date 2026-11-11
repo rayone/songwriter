@@ -158,17 +158,41 @@ def render_minimax(fields: dict[str, str], instrumental: bool = False) -> str:
     return "\n\n".join(blocks)
 
 
-def render_yue2(tags: list[str], bpm: int) -> str:
+def render_yue2(tags: list[str], bpm: int, protected: list[str] | None = None) -> str:
     """Assemble the single-line YuE2 style string.
 
-    YuE2 takes comma-separated tags, not prose. The tempo tag is always the
-    resolved one: a model-authored tag may fuse a tempo with other words
-    ("167 BPM psychological intensity"), which reads as neither a clean tempo
-    marker nor a clean descriptor.
+    YuE2 takes comma-separated tags, not prose. Output order follows the contract
+    example: language, BPM, genre/subgenre, then the remaining descriptors (vocals,
+    mood). The tempo tag is always the resolved one.
+
+    `protected` holds authoritative structured values (genre/subgenre) kept verbatim;
+    they bypass the prose/word-count filter applied to model-authored tags, so a
+    legitimate multi-word genre like "Electropop / Dark Pop with Trap influences" is
+    never silently dropped.
     """
-    cleaned = clean_yue2_tags(tags)
-    cleaned.append(f"{bpm} BPM")
-    return ", ".join(cleaned)
+    cleaned = clean_yue2_tags(tags)          # tempo already stripped here
+    seen: set[str] = set()
+    result: list[str] = []
+
+    def add(value: str) -> None:
+        v = re.sub(r"\s+", " ", str(value or "")).strip().strip(".,;:")
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            result.append(v)
+
+    # Language first (if present), then BPM, then protected genre/subgenre.
+    language = next((t for t in cleaned if t.lower() in {"english", "instrumental"} or t.lower().endswith(" language")), None)
+    if language and language.lower() == "english":
+        add(language)
+    add(f"{bpm} BPM")
+    for p in (protected or []):
+        add(p)
+    # Remaining descriptors in their original order (vocals, style, mood …).
+    for t in cleaned:
+        if language and t.lower() == language.lower() and language.lower() == "english":
+            continue
+        add(t)
+    return ", ".join(result)
 
 
 def render_songbench(

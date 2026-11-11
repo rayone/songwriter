@@ -472,16 +472,17 @@ def build_model_prompts(
         minimax_caption = built.get("minimax") or ""
     # 2. YuE2 style & lyrics
     yue2_lyrics = format_lyrics_for_engine(lyrics, "yue2")
-    tags = ["English", f"{bpm} BPM", genre]
-    if subgenre:
-        tags.append(subgenre)
+    # YuE2 style. Genre/subgenre are authoritative structured values, passed as
+    # `protected` so a multi-word genre is never dropped by the prose-tag filter.
+    tags = ["English"]
     if instrumental:
         tags.append("instrumental")
     else:
         tags.append(f"{vocal} vocals")
     if style_prompt:
         tags.append(style_prompt)
-    yue2_style = render_yue2(tags, bpm)
+    protected = [genre] + ([subgenre] if subgenre else [])
+    yue2_style = render_yue2(tags, bpm, protected=protected)
 
     # 3. ABC score — only real, imported-from-MIDI scores; never fabricated.
     abc_score = song_dict.get("abc_score") or ""
