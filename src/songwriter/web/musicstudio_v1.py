@@ -221,8 +221,14 @@ class SongListItem(BaseModel):
     has_abc: bool = False
     status: str = "ready"
     updated_at: str
-    available_revisions: list[int] = Field(default_factory=list)
     take_id: str = ""
+    # Takes: a song is a creative work; takes are its generated versions. take_group is a
+    # stable id shared by all takes of one song; take_number is 1..N within the group;
+    # take_count is the group size. A standalone song is group-of-one (take_number 1,
+    # take_count 1, take_group == id).
+    take_group: str = ""
+    take_number: int = 1
+    take_count: int = 1
 
 class SongListResponse(BaseModel):
     songs: list[SongListItem]
@@ -497,7 +503,7 @@ def health_check() -> dict[str, Any]:
     return {
         "status": "healthy",
         "version": "1.2.0",
-        "contract_version": 4,
+        "contract_version": 5,
         "total_songs": cnt,
         "storage": {
             "data_dir": str(config.DATA_DIR),
@@ -518,7 +524,7 @@ def list_songs(
     q: str | None = Query(None, description="Search query across title, brief, lyrics"),
     limit: int = Query(50, ge=1, le=100, description="Max songs to return"),
     cursor: str | None = Query(None, description="Opaque pagination cursor"),
-    all_revisions: bool = Query(False, description="List every historical revision as a separate row"),
+    all_revisions: bool = Query(False, description="Deprecated/no-op: takes are grouped via take_group in the default list"),
     _token: str = Depends(require_auth),
 ) -> Any:
     con = get_db_read()
@@ -549,80 +555,13 @@ def list_songs(
                 params.extend([c_time, c_time, c_id])
 
         where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        if all_revisions:
-            # Paginate at the SONG level so a song's takes are never split across the row
-            # limit. Pick the most-recently-touched `limit` songs, then return every take of
-            # exactly those songs. This keeps available_revisions complete per song and
-            # guarantees no take is silently dropped mid-song.
-            song_rows = con.execute(
-                """
-                SELECT song_id, max(created_at) AS last_at
-                FROM song_revisions
-                GROUP BY song_id
-                ORDER BY last_at DESC, song_id DESC
-                LIMIT ?
-                """,
-                [limit + 1],
-            ).fetchall()
-            has_more = len(song_rows) > limit
-            page_sids = [s[0] for s in song_rows[:limit]]
-            songs: list[SongListItem] = []
-            next_cursor = None
-            if page_sids:
-                placeholders = ", ".join("?" for _ in page_sids)
-                take_rows = con.execute(
-                    f"""
-                    SELECT song_id, revision, created_at, generation
-                    FROM song_revisions
-                    WHERE song_id IN ({placeholders})
-                    ORDER BY created_at DESC, song_id DESC, revision DESC
-                    """,
-                    page_sids,
-                ).fetchall()
-                # Full take list per song (every take of the paged songs, newest first).
-                rev_map: dict[str, list[int]] = {}
-                for sid_rev, r_num in con.execute(
-                    f"SELECT song_id, revision FROM song_revisions WHERE song_id IN ({placeholders}) ORDER BY song_id, revision DESC",
-                    page_sids,
-                ).fetchall():
-                    rev_map.setdefault(sid_rev, []).append(r_num)
-                for sid, rev, dt, gen_val in take_rows:
-                    g = json.loads(gen_val) if isinstance(gen_val, str) else gen_val
-                    dt_iso = to_utc_iso(dt)
-                    vocal = g.get("vocal") or g.get("vocal_style") or ""
-                    style_prompt = g.get("style_prompt") or ""
-                    inst = is_instrumental(vocal, style_prompt)
-                    dur = estimate_duration_sec(g.get("lyrics") or "", int(round(g.get("bpm") or g.get("tempo_bpm") or 118)))
-                    songs.append(SongListItem(
-                        id=sid,
-                        revision=rev,
-                        take_id=f"{sid}:{rev}",
-                        title=g.get("title") or "Untitled Song",
-                        summary=g.get("brief") or g.get("prompt") or (g.get("lyrics", "")[:100]),
-                        genre=g.get("genre") or "Pop",
-                        subgenre=g.get("subgenre") or "",
-                        language="English",
-                        instrumental=inst,
-                        duration_hint_sec=dur,
-                        bpm=int(round(g.get("bpm") or g.get("tempo_bpm") or 118)),
-                        key=f"{g.get('key') or 'C'} {g.get('scale') or 'major'}".strip(),
-                        scale=g.get("scale") or "major",
-                        time_signature=g.get("time_signature") or "4/4",
-                        has_abc=bool(g.get("abc_score")),
-                        status="ready",
-                        updated_at=dt_iso,
-                        available_revisions=rev_map.get(sid, [rev]),
-                    ))
-                if has_more:
-                    last_sid, last_at = song_rows[limit - 1]
-                    next_cursor = encode_cursor(last_at, last_sid)
-            return SongListResponse(songs=songs, next_cursor=next_cursor)
-
         sql = f"""
             SELECT id, COALESCE(revision, 1) AS revision, title, brief, genre, subgenre,
                    tempo_bpm, musical_key, scale, vocal_style, style_prompt, lyrics,
                    (abc_score IS NOT NULL AND trim(abc_score) != '') AS has_abc,
-                   status, updated_at
+                   status, updated_at,
+                   COALESCE(NULLIF(generation->>'$.take_group', ''), id) AS take_group,
+                   COALESCE(CAST(generation->>'$.take_number' AS INTEGER), 1) AS take_number
             FROM crafted_songs
             {where_sql}
             ORDER BY updated_at DESC, id DESC
@@ -635,20 +574,19 @@ def list_songs(
         next_cursor = None
         has_more = len(rows) > limit
         effective_rows = rows[:limit]
-        rev_map: dict[str, list[int]] = {}
-        song_ids = [r[0] for r in effective_rows]
-        if song_ids:
-            placeholders = ", ".join("?" for _ in song_ids)
-            rev_tuples = con.execute(
-                f"SELECT song_id, revision FROM song_revisions WHERE song_id IN ({placeholders}) ORDER BY song_id, revision DESC",
-                song_ids,
-            ).fetchall()
-            for sid_rev, r_num in rev_tuples:
-                rev_map.setdefault(sid_rev, []).append(r_num)
+        # take_count per group across the whole library (not just this page), so a song
+        # that genuinely has N takes always reports N even if some takes are off-page.
+        count_by_group: dict[str, int] = {}
+        for grp, cnt in con.execute(
+            "SELECT COALESCE(NULLIF(generation->>'$.take_group', ''), id) AS g, count(*) "
+            "FROM crafted_songs GROUP BY g"
+        ).fetchall():
+            count_by_group[grp] = int(cnt)
 
         hash_parts = []
         for r in effective_rows:
-            sid, rev, title, brief, g, sg, bpm, key, scale, vocal, prompt, lyrics, has_abc, stat, updated_at = r
+            (sid, rev, title, brief, g, sg, bpm, key, scale, vocal, prompt, lyrics,
+             has_abc, stat, updated_at, take_group, take_number) = r
             dt_iso = to_utc_iso(updated_at)
             hash_parts.append(f"{sid}:{rev}:{dt_iso}")
 
@@ -660,6 +598,9 @@ def list_songs(
                 id=sid,
                 revision=rev,
                 take_id=f"{sid}:{rev}",
+                take_group=take_group or sid,
+                take_number=int(take_number or 1),
+                take_count=count_by_group.get(take_group or sid, 1),
                 title=title or "Untitled Song",
                 summary=brief or prompt or (lyrics[:100] if lyrics else ""),
                 genre=g or "Pop",
@@ -674,7 +615,6 @@ def list_songs(
                 has_abc=has_abc_available,
                 status=stat or "ready",
                 updated_at=dt_iso,
-                available_revisions=rev_map.get(sid, [rev]),
             ))
         if has_more:
             last_row = effective_rows[-1]

@@ -183,6 +183,12 @@ class SongGeneration:
     # --- identity ----------------------------------------------------------
     song_id: str = ""
     revision: int = 0
+    # Take grouping: songs are creative works, takes are their generated versions.
+    # `take_group` is a stable id shared by every take of one song (the first take's
+    # song_id); `take_number` is 1..N within that group. Empty/0 = a standalone song
+    # (its own single take). Persisted in the generation JSON, surfaced by the API.
+    take_group: str = ""
+    take_number: int = 0
     status: str = "draft"
     title: str = "Untitled Song"
     artist: str = ""

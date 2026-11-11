@@ -109,6 +109,19 @@ class SongStore:
         Failures raise -- a save is never silently dropped.
         """
         song_id = gen.song_id or f"song_{uuid.uuid4().hex[:10]}"
+        # Assign take grouping before serializing. A standalone song is its own group
+        # (take_group = song_id, take_number = 1). A take carried from another take keeps
+        # its take_group; its number is the next free slot in that group. Existing saves
+        # without grouping stay ungrouped (no backfill).
+        if not gen.take_group:
+            gen.take_group = song_id
+        if gen.take_number <= 0:
+            existing = self.db.read_one(
+                "SELECT max(CAST(generation->>'$.take_number' AS INTEGER)) "
+                "FROM crafted_songs WHERE generation->>'$.take_group' = ?",
+                (gen.take_group,),
+            )
+            gen.take_number = int((existing[0] or 0)) + 1 if existing else 1
         doc = json.dumps(gen.to_record())
         with self.db.transaction() as cur:
             row = cur.execute("SELECT revision FROM crafted_songs WHERE id = ?", (song_id,)).fetchone()

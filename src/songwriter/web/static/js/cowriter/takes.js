@@ -662,7 +662,11 @@ function beginTake(isNewTake, resetTakeId) {
   // Capture the model this take runs with, so its labels stay correct even if the
   // dropdown selection changes before the next take.
   const model = (state.selectedModel || (el('gw-model') && el('gw-model').value) || '').trim();
-  const take = { takeId, status: 'running', lyrics: '', songId: previous && previous.songId,
+  // A new take belongs to the same song: carry the group so saves link as Take N, not a
+  // new standalone song. The server assigns the number; we only pass the group id.
+  const take = { takeId, status: 'running', lyrics: '',
+    songId: isNewTake ? null : (previous && previous.songId),
+    takeGroup: state.takeGroup || (previous && previous.takeGroup) || null,
     model: model, abort: new AbortController(), turnText: 'Turn 0' };
   state.takes[takeId] = take;
   ensureTakePanes(take);
@@ -868,9 +872,11 @@ async function saveCurrentTake() {
     setStatus('gw-status', 'Please generate lyrics first before saving to library.', 'yellow');
     return;
   }
-  // The generation is the single source of truth: save it whole, with the title edit applied.
+  // The generation is the single source of truth: save it whole, with the title edit
+  // applied, and carry the take group so the server links this as Take N of the song.
   const generation = Object.assign({}, currentTake.generation, {
-    title: val('gw-title') || currentTake.generation.title || 'Untitled Song'
+    title: val('gw-title') || currentTake.generation.title || 'Untitled Song',
+    take_group: currentTake.takeGroup || state.takeGroup || ''
   });
   try {
     const res = await postJSON('/api/crafted_songs', {
@@ -879,13 +885,17 @@ async function saveCurrentTake() {
       generation: generation
     });
     currentTake.songId = res.song_id;
+    // Capture the server-assigned group/number so sibling takes link to the same song.
+    currentTake.takeGroup = res.take_group || currentTake.takeGroup || res.song_id;
+    state.takeGroup = currentTake.takeGroup;
+    generation.take_group = currentTake.takeGroup;
+    if (typeof res.take_number === 'number') currentTake.takeNumber = res.take_number;
     currentTake.generation = generation;
-    // Every later draft or save in this session adds a revision to this song.
     state.editingSongId = res.song_id;
     if (res.status === 'unchanged') {
-      setStatus('gw-status', 'No changes since revision ' + res.revision + ' of "' + generation.title + '". Edit or re-draft to save a new revision.', 'yellow');
+      setStatus('gw-status', 'No changes since "' + generation.title + '" Take ' + (currentTake.takeNumber || 1) + '. Edit or re-draft to save a new version.', 'yellow');
     } else {
-      setStatus('gw-status', 'Saved "' + generation.title + '" (revision ' + res.revision + ') to library!', 'green');
+      setStatus('gw-status', 'Saved "' + generation.title + '" (Take ' + (currentTake.takeNumber || 1) + ') to library!', 'green');
     }
   } catch (e) {
     setStatus('gw-status', 'Save error: ' + e.message, 'red');
