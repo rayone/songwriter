@@ -237,7 +237,6 @@
   border: 1px solid var(--border-subtle);
   border-radius: 10px;
   padding: 14px;
-  max-height: 520px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
