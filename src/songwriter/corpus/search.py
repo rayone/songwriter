@@ -16,6 +16,7 @@ import duckdb
 from songwriter.phonetics.core import Phonetics, scan_line
 from songwriter.craft.stats import VOCABLE_TAGS
 from songwriter.corpus.references import ReferenceStore, normalize_identity
+from songwriter.db import duckdb_config
 
 from songwriter.config import CORPUS_DB as DEFAULT_APP_DB, SONGS_PARQUET as DEFAULT_SONGS, DATA_DIR
 RAW_PARQUET = DEFAULT_SONGS if DEFAULT_SONGS.exists() else DATA_DIR / "raw" / "train-*.parquet"
@@ -145,9 +146,10 @@ class SongSearcher:
         """
         if self._abc_col is None:
             try:
-                cols = duckdb.sql(
-                    f"DESCRIBE SELECT * FROM '{self.parquet_glob}' LIMIT 1"
-                ).fetchall()
+                with duckdb.connect(":memory:", config=duckdb_config()) as conn:
+                    cols = conn.execute(
+                        f"DESCRIBE SELECT * FROM '{self.parquet_glob}' LIMIT 1"
+                    ).fetchall()
                 self._abc_col = any(c[0] == "abc_score" for c in cols)
             except Exception:
                 self._abc_col = False
@@ -162,10 +164,11 @@ class SongSearcher:
             ids: set[int] = set()
             if self._has_abc_column() and "songs.parquet" in self.parquet_glob:
                 try:
-                    rows = duckdb.sql(
-                        f"SELECT song_id FROM '{self.parquet_glob}' "
-                        f"WHERE abc_score IS NOT NULL AND abc_score <> ''"
-                    ).fetchall()
+                    with duckdb.connect(":memory:", config=duckdb_config()) as conn:
+                        rows = conn.execute(
+                            f"SELECT song_id FROM '{self.parquet_glob}' "
+                            f"WHERE abc_score IS NOT NULL AND abc_score <> ''"
+                        ).fetchall()
                     ids = {int(r[0]) for r in rows if r[0] is not None}
                 except Exception:
                     ids = set()
@@ -269,7 +272,10 @@ class SongSearcher:
         """
         results: list[SongSummary] = []
         try:
-            rows = duckdb.sql(sql).fetchall()
+            # A connection per query avoids DuckDB's process-global SQL cursor:
+            # concurrent requests can otherwise deadlock its mutex against the GIL.
+            with duckdb.connect(":memory:", config=duckdb_config()) as conn:
+                rows = conn.execute(sql).fetchall()
             for title, artist, tag, year, l_len, preview, rel, s_id, l_cnt, w_cnt, s_cnt, t_bpm, m_key, m_scale, h_midi in rows:
                 # Compute exact metrics from row or preview/length
                 lines_est = l_cnt if l_cnt > 0 else (preview.count("\n") + 1 if preview else 0)
@@ -410,7 +416,8 @@ class SongSearcher:
                 LIMIT 1
             """
             try:
-                row = duckdb.sql(sql).fetchone()
+                with duckdb.connect(":memory:", config=duckdb_config()) as conn:
+                    row = conn.execute(sql).fetchone()
             except Exception:
                 row = None
 
@@ -440,7 +447,8 @@ class SongSearcher:
                 LIMIT 1
             """
             try:
-                row = duckdb.sql(sql).fetchone()
+                with duckdb.connect(":memory:", config=duckdb_config()) as conn:
+                    row = conn.execute(sql).fetchone()
             except Exception:
                 row = None
         if not row and title:
@@ -455,7 +463,8 @@ class SongSearcher:
                 LIMIT 1
             """
             try:
-                row = duckdb.sql(sql).fetchone()
+                with duckdb.connect(":memory:", config=duckdb_config()) as conn:
+                    row = conn.execute(sql).fetchone()
             except Exception:
                 row = None
 

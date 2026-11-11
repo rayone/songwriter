@@ -198,6 +198,54 @@ _DEFAULTS: dict[str, tuple[str, str, list[str], str]] = {
         "turn passes and its rewrites go into the retry, so keep the JSON keys. Literal "
         "braces must be doubled: {{ }}.",
     ),
+    "engine_prompt": (
+        "Engine Prompts (YuE2 & MiniMax)",
+        "Write the production prompt for an AI music engine for this song.\n\n"
+        "SONG BRIEF & CREATIVE DIRECTION\n"
+        "- Title: {title}\n"
+        "- Brief: {brief}\n"
+        "- Storyline: {story}\n"
+        "- Style & Sound Direction: {style}\n\n"
+        "CONFIRMED PRODUCTION SPEC\n"
+        "- genre: {genre} (authoritative; do not replace with reference/template genre)\n"
+        "- subgenre/influences: {subgenre}\n"
+        "- lyrics language: {language}\n"
+        "- tempo: {bpm} BPM\n"
+        "- key: {music_key} {scale}\n"
+        "- vocal: {vocal}\n\n"
+        "WRITER'S DECISIONS & PRODUCER ANSWERS\n"
+        "{decisions}\n\n"
+        "REFERENCE MATERIAL from a comparable production template. Use it for register and\n"
+        "level of detail. Describe THIS song; do not copy these sentences.\n"
+        "{reference}\n\n"
+        "Produce two things in JSON:\n\n"
+        "1. \"minimax\": one entry per field below. Each is 2-4 sentences of specific\n"
+        "   production description written for this brief: name instruments, frequency\n"
+        "   character, spatial treatment and how the arrangement changes across sections.\n"
+        "   For \"instrument_lifecycle\" write two lines exactly, starting \"Primary:\" and\n"
+        "   \"Secondary:\".\n"
+        "{field_list}\n\n"
+        "2. \"yue2\": 8-14 concise, comma-separated style tags for YuE2 audio generation.\n"
+        "   Each tag must be a short phrase (1-5 words), NOT a complete sentence, and NO bracketed section names.\n"
+        "   Construct the tags by integrating ALL supplied production information and producer answers:\n"
+        "   - Language (e.g. \"English\")\n"
+        "   - Tempo and Key/Scale: exactly \"{bpm} BPM\" and \"{music_key} {scale}\"\n"
+        "   - Genre and Influences: authoritative genre \"{genre}\" and stylistic subgenres/influences\n"
+        "   - Concrete Instruments: specific physical instruments, synth types, bass types, and drum elements reflecting the brief and answers (e.g. \"heavy 808 sub bass\", \"analog synth arpeggios\", \"crisp trap hi-hats\", \"layered acoustic piano\", \"punchy kick\")\n"
+        "   - Dominant Mood & Atmosphere: emotional attitude and sonic ambiance (e.g. \"dark moody atmosphere\", \"tense nocturnal energy\", \"melancholic\")\n"
+        "   - Vocal Tone & Delivery: vocal gender and delivery tone (e.g. \"female vocal\", \"breathy emotive delivery\", \"whispered vocals\", \"intimate close-mic vocal\"). CRITICAL: If vocal spec is instrumental, DO NOT output any vocal or voice tags; output \"instrumental\" instead.\n"
+        "   Choose instruments and vocal tone for THIS song, not from the examples above.\n"
+        "   Shape: [\"<language>\", \"{bpm} BPM\", \"{genre}\", \"<influence>\", \"<instruments>\", \"<mood>\", \"<vocal gender>\", \"<vocal tone>\", \"{music_key} {scale}\"]\n\n"
+        "Respond with JSON only:\n"
+        '{{"minimax": {{"<field>": "<text>"}}, "yue2": ["tag", "tag"]}}',
+        [
+            "title", "brief", "story", "style", "genre", "subgenre", "language",
+            "bpm", "music_key", "scale", "vocal", "decisions", "reference", "field_list",
+        ],
+        "Authors production prompts for MiniMax Music 3 and concise style tags for "
+        "YuE2 from the song brief, story, musical specs, and producer decisions. "
+        "Literal braces must be doubled: {{ }}.",
+    ),
 }
 
 _SCHEMA_TEMPLATE = """

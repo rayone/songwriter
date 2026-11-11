@@ -14,6 +14,7 @@ window.addEventListener('DOMContentLoaded', function boot() {
   loadModels();
   loadFormatterTemplates();
   loadDatabaseStats();
+  resumeArtistReferenceImport();
   loadTemplateGenres().then(function() { loadTemplatesForDropdown('', ''); });
   const styleInput = el('gw-style-input');
   if (styleInput) {

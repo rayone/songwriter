@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 import importlib
+import threading
+import subprocess
+import sys
+import textwrap
+
+import duckdb
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -11,6 +17,7 @@ from fastapi.testclient import TestClient
 from songwriter.ai.cowriter import SongwriterCowriter
 from songwriter.corpus.references import ReferenceSongInput, ReferenceStore
 from songwriter.corpus.search import SongSearcher
+from songwriter.corpus.artist_imports import ArtistImportManager, ImportInProgress
 from songwriter.db import Database
 from songwriter.service import Workbench
 
@@ -162,3 +169,130 @@ def test_recommendations_use_supplied_tempo_without_corpus_or_invented_midi(cata
     assert [(r["song_id"], r["bpm"], r["has_midi"]) for r in imported] == [(result["song_ids"][0], 125, False)]
     midi = writer.recommend_reference_songs(genre="Darkwave", bpm=125, has_midi=True, limit=20)
     assert not any(r["song_id"] in result["song_ids"] for r in midi)
+
+
+def test_automated_refresh_preserves_known_metadata_and_fills_unknowns(catalog):
+    store, searcher = catalog
+    first = store.import_songs([
+        reference(),
+        reference(title="Unrated", genre="misc", year=0, tempo_bpm=None, musical_key=None, scale=None),
+    ])
+    changed = LYRICS.replace("lantern", "candle")
+    result = store.import_songs([
+        reference(lyrics=changed, genre="pop", year=2014, tempo_bpm=None, musical_key=None, scale=None),
+        reference(title="Unrated", genre="pop", year=2014, tempo_bpm=None, musical_key=None, scale=None),
+    ], preserve_metadata=True)
+    assert result["song_ids"] == first["song_ids"]
+    known = searcher.get_song(song_id=first["song_ids"][0])
+    assert known.raw_lyrics == changed
+    assert (known.genre, known.year, known.tempo_bpm, known.musical_key, known.scale) == ("darkwave", 2023, 125, "F#", "minor")
+    unrated = searcher.get_song(song_id=first["song_ids"][1])
+    assert (unrated.genre, unrated.year, unrated.tempo_bpm, unrated.musical_key) == ("pop", 2014, None, None)
+
+
+def test_artist_job_is_exclusive_and_imports_beyond_manual_batch_limit(catalog, monkeypatch):
+    store, searcher = catalog
+    entered, resume = threading.Event(), threading.Event()
+    records = [reference(title=f"Track {i}") for i in range(201)]
+
+    def load(artist, timeout_seconds, progress):
+        entered.set()
+        if not resume.wait(5):
+            raise RuntimeError("Test did not release its import worker")
+        return records
+
+    monkeypatch.setattr("songwriter.corpus.artist_imports.CORPUS_DB", store.db.path.parent / "missing.duckdb")
+    monkeypatch.setattr("songwriter.corpus.artist_imports.load_artist", load)
+    manager = ArtistImportManager()
+    manager.start("Example Artist", store)
+    try:
+        assert entered.wait(5)
+        assert manager.status()["status"] == "running"
+        with pytest.raises(ImportInProgress):
+            manager.start("Another Artist", store)
+        assert store.count() == 0
+    finally:
+        resume.set()
+        manager._worker.join(5)
+    status = manager.status()
+    assert status["status"] == "complete"
+    assert (status["found"], status["added"], status["updated"]) == (201, 201, 0)
+    assert store.count() == 201
+    assert searcher.get_song(title="Track 200", artist="Example Artist").raw_lyrics == LYRICS
+
+
+def test_artist_job_reports_failed_save_without_partial_import(catalog, monkeypatch):
+    store, _ = catalog
+    monkeypatch.setattr("songwriter.corpus.artist_imports.load_artist", lambda *args: [
+        reference(), reference(title="Broken", lyrics="[Verse]"),
+    ])
+    monkeypatch.setattr("songwriter.corpus.artist_imports.CORPUS_DB", store.db.path.parent / "missing.duckdb")
+    manager = ArtistImportManager()
+    manager.start("Example Artist", store)
+    manager._worker.join(5)
+    status = manager.status()
+    assert status["status"] == "failed"
+    assert "section headings" in status["error"]
+    assert status["song_ids"] == []
+    assert store.count() == 0
+
+
+@pytest.mark.parametrize("has_override", [False, True])
+def test_artist_import_reuses_bundled_tracks_unless_an_import_overrides_them(catalog, monkeypatch, has_override):
+    store, searcher = catalog
+    bundled_path = store.db.path.parent / "bundled.duckdb"
+    with duckdb.connect(str(bundled_path)) as conn:
+        conn.execute("CREATE TABLE songs(song_id BIGINT, title VARCHAR, artist VARCHAR)")
+        conn.execute("INSERT INTO songs VALUES (13, 'City Windows', 'Example Artist')")
+    monkeypatch.setattr("songwriter.corpus.artist_imports.CORPUS_DB", bundled_path)
+    original_id = store.import_songs([reference()])["song_ids"][0] if has_override else None
+    changed = LYRICS.replace("lantern", "candle")
+    monkeypatch.setattr("songwriter.corpus.artist_imports.load_artist", lambda *args: [
+        reference(lyrics=changed, tempo_bpm=None, musical_key=None, scale=None),
+    ])
+    manager = ArtistImportManager()
+    manager.start("Example Artist", store)
+    manager._worker.join(5)
+    status = manager.status()
+    assert status["status"] == "complete"
+    assert status["song_ids"] == ([original_id] if has_override else [13])
+    assert status["existing"] == (0 if has_override else 1)
+    assert store.count() == (1 if has_override else 0)
+    if has_override:
+        song = searcher.get_song(song_id=original_id)
+        assert song.tempo_bpm == 125 and song.raw_lyrics == changed
+
+
+def test_parallel_reference_searches_finish_without_a_bundled_corpus(tmp_path):
+    # Bound a deadlock regression in a child so it cannot freeze the test suite.
+    script = textwrap.dedent("""
+        import os
+        import sys
+        from concurrent.futures import ThreadPoolExecutor
+        from pathlib import Path
+        from threading import Barrier
+
+        os.environ["SONGWRITER_DATA_DIR"] = sys.argv[1]
+        os.environ["SONGWRITER_DUCKDB_THREADS"] = "1"
+        from songwriter.corpus.references import ReferenceSongInput, ReferenceStore
+        from songwriter.corpus.search import SongSearcher
+        from songwriter.db import Database
+
+        root = Path(sys.argv[1])
+        store = ReferenceStore(Database.get(root / "workbench.duckdb", read_only=False))
+        song_id = store.import_songs([ReferenceSongInput(
+            title="City Windows", artist="Example Artist", lyrics="[Verse]\\nThe city lights are fading",
+        )])["song_ids"][0]
+        searcher = SongSearcher(root / "songs.parquet", root / "absent.duckdb", store)
+        ready = Barrier(4)
+
+        def search(_):
+            ready.wait()
+            songs = searcher.search("City Windows")
+            assert [(song.song_id, song.title) for song in songs] == [(song_id, "City Windows")]
+            assert searcher.get_song(song_id=song_id).raw_lyrics == "[Verse]\\nThe city lights are fading"
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(search, range(4)))
+    """)
+    subprocess.run([sys.executable, "-c", script, str(tmp_path)], check=True, timeout=30)

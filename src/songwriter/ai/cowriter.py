@@ -1918,9 +1918,9 @@ Respond with JSON only, no prose, in exactly this shape:
         )
         spec = {
             "bpm": gen.bpm, "music_key": gen.key, "scale": gen.scale, "genre": gen.genre,
-            "vocal": gen.vocal, "style": gen.style or gen.genre, "story": gen.story,
-            "allow_slang": gen.allow_slang, "allow_offensive": gen.allow_offensive,
-            "allow_phrases": gen.allow_phrases,
+            "subgenre": gen.subgenre, "vocal": gen.vocal, "style": gen.style or gen.genre,
+            "story": gen.story, "title": gen.title, "allow_slang": gen.allow_slang,
+            "allow_offensive": gen.allow_offensive, "allow_phrases": gen.allow_phrases,
         }
         plan = ", ".join(f"[{n}]" for n in gen.planned_sections())
 
@@ -3258,9 +3258,9 @@ Respond with JSON only, no prose, in exactly this shape:
                 template_segments = tmpl_detail.get("segments")
 
         prompt_pkgs = EnginePromptBuilder(chat=self._chat).build(
-            spec={"genre": gen.genre, "bpm": gen.bpm, "music_key": gen.key, "scale": gen.scale,
-                  "vocal": gen.vocal, "template_id": gen.template_id},
-            segments=template_segments,
+            spec={"genre": gen.genre, "subgenre": gen.subgenre, "bpm": gen.bpm, "music_key": gen.key,
+                  "scale": gen.scale, "vocal": gen.vocal, "template_id": gen.template_id,
+                  "style": gen.style, "story": gen.story, "title": gen.title},
             brief=gen.brief,
             answers=gen.answers,
             model=gen.model,
@@ -3798,8 +3798,9 @@ Respond with JSON only, no prose, in exactly this shape:
                                  "performer": gen.vocal})
         gen.sections = sections
         prompt_pkgs = EnginePromptBuilder(chat=self._chat).build(
-            spec={"genre": gen.genre, "bpm": gen.bpm, "music_key": gen.key, "scale": gen.scale,
-                  "vocal": gen.vocal, "template_id": gen.template_id},
+            spec={"genre": gen.genre, "subgenre": gen.subgenre, "bpm": gen.bpm, "music_key": gen.key,
+                  "scale": gen.scale, "vocal": gen.vocal, "template_id": gen.template_id,
+                  "style": gen.style, "story": gen.story, "title": gen.title},
             brief=gen.brief, answers=gen.answers, model=gen.model, use_model=False,
         )
         gen.engine_prompts = {

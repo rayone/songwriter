@@ -239,11 +239,21 @@
               <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
               Add / update references
             </span>
-            <span class="fs-xs c-dim">Paste song or bulk JSON</span>
+            <span class="fs-xs c-dim">Artist import, paste song or bulk JSON</span>
           </summary>
           <div class="mt-10">
+            <div class="subpanel mb-14">
+              <div class="fs-sm fw-700 c-bright mb-4">Import an artist automatically</div>
+              <div class="field-hint mb-8">Fetch all matching songs from the <a href="https://huggingface.co/datasets/theelderemo/genius-lyrics-cleaned" target="_blank" rel="noopener noreferrer">licensed English lyrics dataset</a>. Newer releases may be absent. Bundled references stay intact; previous imports keep their known music metadata.</div>
+              <label class="field-label" for="artist-import-name">Artist to import</label>
+              <div class="flex gap-8">
+                <input type="text" id="artist-import-name" value="Mr.Kitty" maxlength="240" required>
+                <button type="button" id="artist-import-start" class="btn-primary w-auto" onclick="startArtistReferenceImport()">Import Artist</button>
+              </div>
+              <div id="artist-import-status" class="status-line mt-8" aria-live="polite"></div>
+            </div>
             <div class="field-hint mb-10">
-              User supplies lyrics; no artist-only downloading or audio/MIDI extraction is performed. Section headings like <code>[Verse 1]</code> and <code>[Chorus]</code> preserve blueprint structure and scansion. Matching artist and title updates and completely replaces an imported record; omitted optional metadata clears it.
+              Or supply lyrics below. Section headings like <code>[Verse 1]</code> and <code>[Chorus]</code> preserve structure. Manual artist/title matches completely replace an imported record; omitted optional metadata clears it. No audio or MIDI is extracted.
             </div>
 
             <!-- Single Song Reference Form -->
@@ -1114,6 +1124,18 @@
       <button type="button" class="btn-primary w-auto" onclick="saveSettings()">Save Settings</button>
       <span id="settings-test-result" class="status-line"></span>
     </div>
+  </div>
+
+  <div class="card mb-16">
+    <div class="card-header"><span>Reference Imports</span></div>
+    <div class="field-group mb-12">
+      <label class="field-label" for="set-reference-import-timeout">Network request timeout (seconds)</label>
+      <input type="number" id="set-reference-import-timeout" value="60" min="1" max="300">
+      <div class="field-hint" id="set-reference-import-timeout-src"></div>
+      <div class="field-hint">Applies to each request for the licensed dataset, not the whole artist import. The first import downloads DuckDB's network reader to temporary storage.</div>
+    </div>
+    <button type="button" class="btn-primary w-auto" onclick="saveSettings()">Save Settings</button>
+    <span id="reference-import-settings-result" class="status-line"></span>
   </div>
 
   <div class="card">

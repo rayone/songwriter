@@ -48,7 +48,7 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 
 ## 3. Features
 
-* **Interactive Web Studio:** Full-featured browser UI for drafting songs, analyzing lyric takes, inspecting line-by-line metrics, and exploring reference blueprints. Add or update references by pasting lyrics or importing a JSON batch.
+* **Interactive Web Studio:** Full-featured browser UI for drafting songs, analyzing lyric takes, inspecting line-by-line metrics, and exploring reference blueprints. Import an artist from the licensed lyrics dataset, paste a song, or import a JSON batch.
 * **16 Distinct Rhyme Categories:** Filter and rank rhymes by syllable count, corpus frequency, phonetic strength, register tags (slang, poetic, vulgar), and emotional alignment.
 * **Cadence & Meter Diagnostics:** Real-time feedback on average syllable counts, variance, cadence consistency, and rhythm grid alignment.
 * **Cliché Detection:** Identifies overused phrasing windows and predictable rhyme pairs backed by real-world corpus statistics.
@@ -122,13 +122,43 @@ This project has **two independent version streams**, and the GitHub Releases pa
    uv run python -m songwriter.mcp.server
    ```
 
+### YuE2 style prompts
+
+New generations use the LLM to author comma-separated YuE2 tags from the
+Step 1 brief/story, Step 2 production choices, and Step 3 producer answers.
+The authoring prompt covers genre and influences, concrete instruments, mood,
+vocal gender and tone, language, key/scale, and tempo—not just the short specs
+line. Resolved production choices take precedence over reference/template hints.
+
+Edit this prompt under **Settings → LLM Prompts → Engine Prompts (YuE2 & MiniMax)**.
+Your saved prompt edits are preserved. Existing saved song/take prompts are not
+rewritten; generate a new take to use the improved authoring.
+
 ### Adding or updating reference songs
 
-In **Cowriter → Step 2: Reference & Specs**, search for the artist first. To add
-Mr.Kitty songs that are missing, expand **Add / update references**, enter
-**Mr.Kitty**, the song title, and its lyrics, then click **Save Reference Song**.
-Click **Select Reference** on the resulting card to use its blueprint. Keep
-`[Verse]`, `[Chorus]`, and other section headings in the lyrics when available.
+In **Cowriter → Step 2: Reference & Specs**, expand **Add / update references**,
+enter **Mr.Kitty** under **Artist to import**, and click **Import Artist**.
+The app finds all matching artist records in the
+[licensed English lyrics dataset](https://huggingface.co/datasets/theelderemo/genius-lyrics-cleaned)
+and adds missing references without copying lyrics by hand. Artist lookup ignores
+case, spaces, and punctuation, so **Mr. Kitty** also works.
+
+This imports the available dataset snapshot, not a live Genius discography:
+newer releases may be absent. Existing bundled tracks keep their IDs and music
+enrichment. Previously imported tracks keep known music metadata while their
+lyrics refresh. No BPM, key, chords, audio, or MIDI is guessed from the lyrics.
+The completed import clears the MIDI-only filter and searches the source artist;
+click **Select Reference** on a resulting card.
+
+Imports run in the background and can take several minutes. Reloading the tab
+reconnects to progress; restarting the server interrupts an unfinished job.
+Network failures save no partial import. **Settings → Reference Imports** controls
+the per-request timeout (not the whole job duration). The first import downloads
+DuckDB's network reader into temporary storage.
+
+To supply a song yourself, enter its artist, title, and lyrics, then click
+**Save Reference Song**. Keep `[Verse]`, `[Chorus]`, and other section headings
+when available.
 
 Genre, year, BPM, key, and scale are optional. Supply known values rather than
 guessing: unspecified music metadata stays unspecified in the inspector.
@@ -136,15 +166,14 @@ Recommendations can match imported tracks when their BPM is supplied; selecting
 a track manually does not require BPM. Generation can still use its usual
 production defaults. Importing lyrics does not extract audio, chords, or MIDI.
 
-For an artist's catalog, use **Download Example JSON**, replace the example with
-your songs, choose the file, then click **Import JSON Batch**. The file is a JSON
-array of up to 200 objects. Required keys: `title`, `artist`, `lyrics`. Optional
-keys: `genre`, `year`, `tempo_bpm`, `musical_key`, `scale`. Lyrics are limited to
-100,000 characters per song. This is a supplied-lyrics import, not an automatic
-artist downloader.
+For your own catalog file, use **Download Example JSON**, replace the example
+with your songs, choose the file, then click **Import JSON Batch**. The file is
+a JSON array of up to 200 objects. Required keys: `title`, `artist`, `lyrics`.
+Optional keys: `genre`, `year`, `tempo_bpm`, `musical_key`, `scale`. Lyrics are
+limited to 100,000 characters per song. This path uses the lyrics you supply.
 
-Reimporting the same artist and title (ignoring case and repeated whitespace)
-replaces that imported record's lyrics and metadata without changing its ID.
+Manual reimports of the same artist and title (ignoring case and repeated whitespace)
+replace that imported record's lyrics and metadata without changing its ID.
 Omitted optional metadata resets to unspecified (`misc` genre, `0` year).
 Invalid batches save nothing. The search shows matches for the first imported
 artist; other imported artists can be searched normally.
@@ -159,6 +188,12 @@ The same authenticated REST API is available at
 `POST /api/references/import`, with body `{"songs": [song objects]}`. It returns
 `added`, `updated`, `total`, and `song_ids`; imported IDs are negative and work
 with the existing song-detail and blueprint endpoints.
+
+For automated artist imports, use `POST /api/references/artist-import` with
+`{"artist": "Mr.Kitty"}`. It returns HTTP 202 and a job snapshot. Read progress
+with `GET /api/references/artist-import`; a second start while one is running
+returns HTTP 409. The automated path is not limited to the manual JSON batch's
+200 records.
 
 ---
 

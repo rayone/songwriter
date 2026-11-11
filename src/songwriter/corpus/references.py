@@ -82,8 +82,8 @@ class ReferenceStore:
     def count(self) -> int:
         return int(self.db.read_one("SELECT count(*) FROM reference_songs")[0])
 
-    def import_songs(self, songs: list[ReferenceSongInput]) -> dict[str, Any]:
-        """Replace matching identities atomically; last batch occurrence wins."""
+    def import_songs(self, songs: list[ReferenceSongInput], *, preserve_metadata: bool = False) -> dict[str, Any]:
+        """Replace matching identities atomically; optionally keep known music metadata."""
         identities = [(normalize_identity(s.artist), normalize_identity(s.title)) for s in songs]
         unique = dict(zip(identities, songs))
         ids: dict[tuple[str, str], int] = {}
@@ -98,9 +98,16 @@ class ReferenceStore:
                 if not sections:
                     sections = len(re.split(r"\n\s*\n", song.lyrics))
                 existing = cur.execute(
-                    "SELECT id FROM reference_songs WHERE artist_norm = ? AND title_norm = ?", identity,
+                    "SELECT id, genre, year, tempo_bpm, musical_key, scale FROM reference_songs "
+                    "WHERE artist_norm = ? AND title_norm = ?", identity,
                 ).fetchone()
                 if existing:
+                    if preserve_metadata:
+                        known = dict(zip(("genre", "year", "tempo_bpm", "musical_key", "scale"), existing[1:]))
+                        song = song.model_copy(update={
+                            key: value for key, value in known.items()
+                            if value not in (None, "", 0) and not (key == "genre" and value == "misc")
+                        })
                     song_id = int(existing[0])
                     updated += 1
                 else:

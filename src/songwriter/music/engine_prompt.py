@@ -29,6 +29,7 @@ import json
 import re
 from typing import Any, Callable
 
+from songwriter import prompt_templates
 # MiniMax section order, matching the engine's documented prompt layout.
 MINIMAX_LAYOUT: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
@@ -184,6 +185,7 @@ def render_yue2(tags: list[str], bpm: int, protected: list[str] | None = None) -
     language = next((t for t in cleaned if t.lower() in {"english", "instrumental"} or t.lower().endswith(" language")), None)
     if language and language.lower() == "english":
         add(language)
+
     add(f"{bpm} BPM")
     for p in (protected or []):
         add(p)
@@ -373,11 +375,17 @@ class EnginePromptBuilder:
         # or global scenarios), augment with verified genre-specific MiniMax M3 architecture.
         fields = self._augment_sparse_fields(fields, spec, inputs, instrumental)
 
-        yue2_tags = (authored or {}).get("yue2") or []
+        genre = str(spec.get("genre") or "Pop").strip()
+        subgenre = str(spec.get("subgenre") or "").strip()
+        genre_parts = [p.strip() for p in genre.split("/") if p.strip()]
+        if subgenre and subgenre not in genre_parts:
+            genre_parts.append(subgenre)
+
+        yue2_tags = list((authored or {}).get("yue2") or [])
         if not yue2_tags:
             yue2_tags = self._fallback_tags(spec, inputs, instrumental)
         songbench_prompt = render_songbench(
-            genre=str(spec.get("genre") or "Pop"),
+            genre=genre,
             mood=spec.get("target_mood") or (answers or {}).get("emotional_attitude"),
             lead=inputs.get("primary_layer"),
             bed=inputs.get("secondary_layer") or inputs.get("embellishments"),
@@ -388,7 +396,7 @@ class EnginePromptBuilder:
 
         return {
             "minimax": render_minimax(fields, instrumental=instrumental),
-            "yue2": render_yue2(list(yue2_tags), resolved_bpm),
+            "yue2": render_yue2(list(yue2_tags), resolved_bpm, protected=genre_parts),
             "songbench": songbench_prompt,
             "fields": fields,
             "section_arc": inputs.get("section_arc", ""),
@@ -425,42 +433,34 @@ class EnginePromptBuilder:
 
         field_list = "\n".join(f'  "{key}"  -- {label}' for key, label in wanted)
 
-        prompt = f"""Write the production prompt for an AI music engine for this song.
+        raw_vocal = str(spec.get("vocal") or "").strip()
+        if instrumental:
+            vocal_desc = "instrumental, no vocals (strictly no vocal or voice descriptors)"
+        elif raw_vocal.lower() == "duet":
+            vocal_desc = "Duet (Singer A Male and Singer B Female with trading verses and chorus harmonies)"
+        elif raw_vocal:
+            vocal_desc = raw_vocal if ("vocal" in raw_vocal.lower() or "voice" in raw_vocal.lower()) else f"{raw_vocal} vocal"
+        else:
+            vocal_desc = "melodic lead vocal"
 
-SONG BRIEF
-{brief.strip() or 'An original song.'}
+        prompt_params = {
+            "title": str(spec.get("title") or "").strip() or "- not specified",
+            "subgenre": str(spec.get("subgenre") or "").strip() or "- none specified",
+            "language": str(spec.get("language") or "").strip() or "Follow the brief and producer answers; English if unspecified",
+            "brief": brief.strip() or "An original song.",
+            "story": str(spec.get("story") or "").strip() or "- none provided",
+            "style": str(spec.get("style") or spec.get("genre") or "").strip() or "- not specified",
+            "genre": str(spec.get("genre") or "Pop").strip(),
+            "bpm": int(spec.get("bpm") or 90),
+            "music_key": str(spec.get("music_key") or "C").strip(),
+            "scale": str(spec.get("scale") or "major").strip(),
+            "vocal": vocal_desc,
+            "decisions": decisions or "- none recorded",
+            "reference": reference,
+            "field_list": field_list,
+        }
 
-CONFIRMED PRODUCTION SPEC
-- genre: {spec.get('genre')} (authoritative; do not replace with the reference/template genre)
-- tempo: {spec.get('bpm')} BPM
-- key: {spec.get('music_key')} {spec.get('scale')}
-- vocal: {'instrumental, no vocals' if instrumental else ('Duet (Singer A Male and Singer B Female with trading verses and chorus harmonies)' if str(spec.get('vocal', '')).lower() == 'duet' else spec.get('vocal'))}
-
-WRITER'S DECISIONS
-{decisions or '- none recorded'}
-
-REFERENCE MATERIAL from a comparable production template. Use it for register and
-level of detail. Describe THIS song; do not copy these sentences.
-{reference}
-
-Produce two things.
-
-1. "minimax": one entry per field below. Each is 2-4 sentences of specific
-   production description written for this brief: name instruments, frequency
-   character, spatial treatment and how the arrangement changes across sections.
-   For "instrument_lifecycle" write two lines exactly, starting "Primary:" and
-   "Secondary:".
-{field_list}
-
-2. "yue2": 6-9 short descriptive tags for the same song, each 1-5 words, no
-   sentences and no section names. Cover language, genre, voice character, key
-   instruments, melodic character and phrasing feel.
-   Example shape: ["English", "warm piano pop", "expressive female voice",
-   "acoustic piano", "rounded bass and light drums", "unhurried phrasing"]
-
-Respond with JSON only:
-{{"minimax": {{"<field>": "<text>"}}, "yue2": ["tag", "tag"]}}"""
-
+        prompt = prompt_templates.render("engine_prompt", prompt_params)
         try:
             raw = self.chat(
                 [{"role": "user", "content": prompt}],

@@ -29,6 +29,8 @@ _SPEC: dict[str, tuple[str, Any]] = {
     "default_music_key": ("SONGWRITER_DEFAULT_MUSIC_KEY", "C"),
     "default_scale": ("SONGWRITER_DEFAULT_SCALE", "major"),
     "default_vocal": ("SONGWRITER_DEFAULT_VOCAL", "melodic lead"),
+    # Remote reads of the licensed reference dataset.
+    "reference_import_timeout_seconds": ("SONGWRITER_REFERENCE_IMPORT_TIMEOUT_SECONDS", 60),
     # Validation rules (deterministic line checks).
     "cliche_min_freq": ("SONGWRITER_CLICHE_MIN_FREQ", 8000),
     "cliche_check_enabled": ("SONGWRITER_CLICHE_CHECK", "true"),

@@ -32,6 +32,7 @@ from songwriter.build_info import BUILD_INFO
 from songwriter.ai.cowriter import SongwriterCowriter
 from songwriter.ai.generation import SongGeneration
 from songwriter.corpus.references import ReferenceSongInput
+from songwriter.corpus.artist_imports import ArtistImportManager, ImportInProgress
 from songwriter.db import corpus_db
 from songwriter.lexicon.query import RhymeDB, RhymeType
 from songwriter.service import Workbench
@@ -71,6 +72,7 @@ app.include_router(musicstudio_v1_router)
 
 
 wb = Workbench(DB_PATH)
+artist_import_manager = ArtistImportManager()
 cowriter = SongwriterCowriter()
 
 # The rebuilt rhyme dictionary. Optional so the rest of the API still serves if
@@ -89,6 +91,11 @@ class ReferenceImportRequest(BaseModel):
         ..., min_length=1, max_length=200,
         description="Songs to add or replace, matched by artist and title",
     )
+
+
+class ArtistImportRequest(BaseModel):
+    model_config = {"str_strip_whitespace": True}
+    artist: str = Field(..., min_length=1, max_length=240, description="Artist name in the licensed lyrics dataset")
 
 
 class AnalyzeLineRequest(BaseModel):
@@ -278,6 +285,7 @@ class SettingsUpdate(BaseModel):
     no_end_tag_genres: str | None = Field(default=None, description="Genre keywords (one per line) that never clip a shouted vocal tag onto a line end")
     unseen_pair_min_expected: int | None = Field(default=None, description="Report a never-sung word pair to the critic when chance predicts it at least this often")
     rhyme_landing_min_songs: int | None = Field(default=None, description="A rhyme phrase example must appear in at least this many songs")
+    reference_import_timeout_seconds: int | None = Field(default=None, ge=1, le=300, description="Per-network-request timeout for licensed reference imports")
 
 
 @app.get("/api/settings", summary="Read Runtime Settings")
@@ -822,6 +830,21 @@ def rhyme_health() -> dict[str, Any]:
     }
 
 
+@app.post("/api/references/artist-import", status_code=202, summary="Import an Artist from the Licensed Dataset")
+def import_artist_references(req: ArtistImportRequest) -> dict[str, Any]:
+    try:
+        return artist_import_manager.start(
+            req.artist, wb.searcher.references, app_settings.get("reference_import_timeout_seconds"),
+        )
+    except ImportInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/references/artist-import", summary="Current Artist Import Progress")
+def artist_reference_import_status() -> dict[str, Any] | None:
+    return artist_import_manager.status()
+
+
 @app.post("/api/references/import", summary="Add or Update Reference Songs")
 def import_references(req: ReferenceImportRequest) -> dict[str, Any]:
     """Persist a batch separately from the bundled corpus; updates keep their IDs."""
@@ -1188,7 +1211,8 @@ def save_crafted_song(req: CraftedSongSaveRequest) -> dict[str, Any]:
     cowriter.save_generation(gen)
     # Identical content is not re-stored: tell the UI so it can say "no changes".
     unchanged = prior is not None and gen.revision == prior.revision
-    return {"status": "unchanged" if unchanged else "saved", "song_id": gen.song_id, "revision": gen.revision}
+    return {"status": "unchanged" if unchanged else "saved", "song_id": gen.song_id,
+            "revision": gen.revision, "take_group": gen.take_group, "take_number": gen.take_number}
 
 
 @app.get("/api/crafted_songs/{song_id}/generation", summary="Load a Song's Full Generation for Steps 1-4")

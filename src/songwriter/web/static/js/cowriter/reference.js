@@ -503,3 +503,112 @@ I will find the road once more`,
   link.click();
   URL.revokeObjectURL(url);
 }
+
+// ------------------------------------------------ Automated licensed artist import
+let artistImportTimer = null;
+let artistImportRequest = 0;
+let artistImportHandledId = null;
+
+async function startArtistReferenceImport() {
+  const input = el('artist-import-name');
+  if (!input.reportValidity()) return;
+  const artist = input.value.trim();
+  if (!artist) {
+    setStatus('artist-import-status', 'Enter an artist name.', 'red');
+    return;
+  }
+  const request = ++artistImportRequest;
+  clearTimeout(artistImportTimer);
+  el('artist-import-start').disabled = true;
+  setStatus('artist-import-status', 'Starting licensed dataset import...', '');
+  try {
+    const response = await fetch('/api/references/artist-import', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({artist}),
+    });
+    if (request !== artistImportRequest) return;
+    if (response.status === 409) {
+      await resumeArtistReferenceImport();
+      return;
+    }
+    const job = await response.json();
+    if (!response.ok) {
+      const detail = Array.isArray(job.detail) ? job.detail.map(item => item.msg).join('; ') : job.detail;
+      throw new Error(detail || 'HTTP ' + response.status);
+    }
+    if (request === artistImportRequest) await renderArtistImportStatus(job);
+  } catch (err) {
+    if (request === artistImportRequest) {
+      el('artist-import-start').disabled = false;
+      setStatus('artist-import-status', 'Could not start import: ' + err.message, 'red');
+    }
+  }
+}
+
+async function resumeArtistReferenceImport() {
+  const request = ++artistImportRequest;
+  clearTimeout(artistImportTimer);
+  try {
+    const job = await getJSON('/api/references/artist-import');
+    if (request !== artistImportRequest) return;
+    if (job) await renderArtistImportStatus(job);
+    else el('artist-import-start').disabled = false;
+  } catch (err) {
+    if (request === artistImportRequest) {
+      el('artist-import-start').disabled = false;
+      setStatus('artist-import-status', 'Progress unavailable; the import may still be running. Reload to reconnect: ' + err.message, 'red');
+    }
+  }
+}
+
+async function renderArtistImportStatus(job) {
+  const button = el('artist-import-start');
+  button.disabled = job.status === 'running';
+  if (job.status === 'running') {
+    setStatus('artist-import-status', job.artist + ': ' + job.phase + (job.found ? ' (' + job.found + ' found)' : ''), '');
+    artistImportTimer = setTimeout(resumeArtistReferenceImport, 1000);
+    return;
+  }
+  if (job.status === 'failed') {
+    setStatus('artist-import-status', 'Import failed: ' + job.error, 'red');
+    return;
+  }
+  const summary = job.found ? job.artist + ': ' + job.found + ' dataset songs found; ' + job.added + ' added, ' +
+    job.updated + ' updated, ' + job.existing + ' already available in the bundled catalog.'
+    : 'No matching songs in the licensed dataset. Check the artist name; this source may not contain newer releases.';
+  setStatus('artist-import-status', summary, job.found ? 'green' : 'yellow');
+  if (artistImportHandledId === job.id) return;
+  artistImportHandledId = job.id;
+  button.disabled = true;
+  try {
+    const activeId = state.referenceSong?.id;
+    if (activeId < 0 && job.song_ids.includes(activeId)) {
+      state.referenceRevision++;
+      invalidateQuestions();
+      try {
+        const bp = await getJSON('/api/ai/blueprint?song_id=' + encodeURIComponent(activeId));
+        if (state.referenceSong?.id === activeId) {
+          state.activeBlueprint = bp;
+          state.referenceSong = bp.reference_song;
+          renderSelectedReference(bp);
+          applyBlueprintSpecs(bp);
+          updateStepperUI();
+        }
+      } catch (err) {
+        if (state.referenceSong?.id === activeId) clearSelectedReference();
+        throw err;
+      }
+    }
+    await loadDatabaseStats();
+    if (job.found) {
+      el('gw-ref-has-midi').checked = false;
+      el('gw-ref-search-input').value = job.artist;
+      el('gw-recommendations-section').style.display = 'none';
+      clearTimeout(refSearchTimer);
+      await Promise.all([loadReferenceRecommendations(), searchReferenceSongs()]);
+    }
+  } catch (err) {
+    setStatus('artist-import-status', summary + ' Saved, but the view could not refresh: ' + err.message + '. Select the reference again.', 'yellow');
+  } finally {
+    button.disabled = false;
+  }
+}
