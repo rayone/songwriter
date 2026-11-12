@@ -28,7 +28,7 @@ function goToStep(stepNum) {
 
   // Hook for step-specific data loading
   if (stepNum === 2) {
-    const currentRecKey = [val('gw-prompt'), val('gw-style-input'), val('gw-bpm'), val('gw-key'), val('gw-scale'), val('gw-selected-template-id')].join('::');
+    const currentRecKey = [val('gw-prompt'), val('gw-genre-input'), val('gw-style-input'), val('gw-bpm'), val('gw-key'), val('gw-scale'), val('gw-selected-template-id')].join('::');
     if (!state.recommendations.length || state.lastRecKey !== currentRecKey) {
       state.lastRecKey = currentRecKey;
       loadReferenceRecommendations();

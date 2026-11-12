@@ -3,6 +3,8 @@
 // ------------------------------------------------ Parameters
 // Keep the writer's genre independent from the reference's catalog label.
 function requestedGenre() {
+  const custom = val('gw-genre-input');
+  if (custom) return custom;
   const style = val('gw-style-input');
   const meta = (state.activeTemplate && state.activeTemplate.metadata) || {};
   if (meta.genre && (style === meta.audio_prompt || style === meta.title)) {
@@ -30,6 +32,7 @@ function questionsContextKey() {
     val('gw-prompt') || (state.song && state.song.brief) || '',
     val('gw-storyline-text') || (state.song && state.song.story) || '',
     requestedGenre(),
+    val('gw-genre-input'),
     val('gw-style-input'),
     val('gw-selected-template-id'),
     ref.genre || '',

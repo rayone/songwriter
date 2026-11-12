@@ -204,6 +204,10 @@ async function showTemplateCard(templateId, preserveStyle = false) {
       proTipEl.innerText = meta.pro_tip ? '💡 Pro-Tip: ' + meta.pro_tip : '';
       proTipEl.style.display = meta.pro_tip ? 'block' : 'none';
     }
+    const genreInput = el('gw-genre-input');
+    if (genreInput && !preserveStyle) {
+      genreInput.value = [meta.genre, meta.subgenre].filter(Boolean).join(' / ') || meta.genre || '';
+    }
   }
   const omnibox = el('gw-style-input');
   if (omnibox && !preserveStyle) omnibox.value = meta.audio_prompt || meta.title;
@@ -221,7 +225,12 @@ function clearActiveTemplate(preserveStyle = false) {
   if (!preserveStyle) {
     const omnibox = el('gw-style-input');
     if (omnibox) omnibox.value = '';
-    if (state.song) state.song.style = '';
+    const genreInput = el('gw-genre-input');
+    if (genreInput) genreInput.value = '';
+    if (state.song) {
+      state.song.style = '';
+      state.song.genre = '';
+    }
   }
   const clearBtn = el('gw-template-clear-btn');
   if (clearBtn) clearBtn.style.display = 'none';
@@ -267,6 +276,10 @@ function applyDefaults(defaults) {
   setFieldValue('gw-scale', defaults.scale);
   setFieldValue('gw-vocal', defaults.vocal);
   setFieldValue('gw-syllables', defaults.syllable_target);
+  const genreInput = el('gw-genre-input');
+  if (genreInput) {
+    genreInput.value = [defaults.genre, defaults.subgenre].filter(Boolean).join(' / ') || defaults.genre || '';
+  }
   if (defaults.template_id != null) el('gw-selected-template-id').value = defaults.template_id;
   if (Array.isArray(defaults.banned_words) && !val('gw-banned')) {
     el('gw-banned').value = defaults.banned_words.join(', ');

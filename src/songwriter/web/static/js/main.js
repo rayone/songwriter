@@ -23,6 +23,14 @@ window.addEventListener('DOMContentLoaded', function boot() {
   if (styleInput) {
     styleInput.addEventListener('input', debounce(refreshTemplateMatches, 600));
   }
+  const genreInput = el('gw-genre-input');
+  if (genreInput) {
+    genreInput.addEventListener('input', function() {
+      if (state.song) state.song.genre = this.value.trim();
+      syncSongFromDOM(state.song);
+      if (typeof updateStepNavState === 'function') updateStepNavState();
+    });
+  }
   const promptInput = el('gw-prompt');
   if (promptInput) {
     promptInput.addEventListener('input', updateStepNavState);

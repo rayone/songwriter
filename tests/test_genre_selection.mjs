@@ -9,7 +9,7 @@ function harness() {
   for (const [id, value] of Object.entries({
     'gw-style-input': 'Progressive House / Vocal Trance', 'gw-prompt': 'a song',
     'gw-questions': '', 'gw-selected-template-id': '7', 'gw-storyline-text': 'a story',
-    'gw-interview-status': ''
+    'gw-interview-status': '', 'gw-genre-input': ''
   })) nodes.set(id, { value, style: {} });
   const c = vm.createContext({ document: { getElementById: id => nodes.get(id), addEventListener() {} }, window: {}, updateStepperUI() {}, onVocalChanged() {}, structuredClone: typeof structuredClone !== 'undefined' ? structuredClone : undefined });
   for (const file of ['core.js', 'cowriter/interview.js', 'cowriter/reference.js']) {
@@ -38,6 +38,20 @@ test('template genre uses metadata instead of the entire production caption', ()
   assert.equal(c.requestedGenre(), 'Progressive House / Vocal Trance');
   nodes.get('gw-style-input').value = 'Indie Folk';
   assert.equal(c.requestedGenre(), 'Indie Folk');
+});
+
+test('editing gw-genre-input carries forward as writer genre and invalidates questions when changed', () => {
+  const { c, nodes } = harness();
+  if (!c.state.song) c.state.song = {};
+  nodes.get('gw-genre-input').value = 'Darkwave Synth';
+  assert.equal(c.requestedGenre(), 'Darkwave Synth');
+  const params = c.currentParams();
+  assert.equal(params.genre, 'Darkwave Synth');
+  c.state.song.questions = [{ id: 'genre' }];
+  c.state.questionsKey = c.questionsContextKey();
+  assert.equal(c.questionsAreCurrent(), true);
+  nodes.get('gw-genre-input').value = 'EBM Industrial';
+  assert.equal(c.questionsAreCurrent(), false);
 });
 
 test('reference selection does not replace the writer sound profile', () => {

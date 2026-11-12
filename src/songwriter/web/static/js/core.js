@@ -74,6 +74,11 @@ function syncSongFromDOM(song) {
     if (m) song.model = m;
   }
 
+  const genreEl = el('gw-genre-input');
+  if (genreEl && genreEl.value.trim()) {
+    song.genre = genreEl.value.trim();
+  }
+
   const styleEl = el('gw-style-input');
   if (styleEl) {
     const style = styleEl.value.trim();
@@ -194,6 +199,7 @@ function syncDOMFromSong(song) {
     const clearBtn = el('gw-template-clear-btn');
     if (clearBtn) clearBtn.style.display = 'none';
   }
+  setFieldValue('gw-genre-input', song.genre ?? '');
   setFieldValue('gw-style-input', song.style ?? song.genre ?? '');
 
   setFieldValue('gw-bpm', song.bpm != null ? song.bpm : '');
