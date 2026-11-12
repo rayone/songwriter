@@ -1,18 +1,20 @@
 """Fetch artist records from the licensed corpus, never from lyric website scraping."""
 from __future__ import annotations
 
+import http.client
+import io
 import json
-import tempfile
-from functools import cache
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-import duckdb
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 from pydantic import ValidationError
 
 from songwriter.corpus.references import ReferenceSongInput
-from songwriter.db import duckdb_config
 
 SOURCE_URL = "https://huggingface.co/datasets/theelderemo/genius-lyrics-cleaned"
 _EXPORT_ROOT = "https://huggingface.co/api/datasets/theelderemo/genius-lyrics-cleaned/parquet/default/train"
@@ -28,11 +30,103 @@ class _LicensedRedirects(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-@cache
-def _extension_cache() -> tempfile.TemporaryDirectory:
-    # The service sets HOME=data/. Keep extension subdirectories out of that flat
-    # data root, reuse downloads within this process, and clean up at exit.
-    return tempfile.TemporaryDirectory(prefix="songwriter-duckdb-extensions-")
+class _RemoteParquet(io.RawIOBase):
+    """Seekable, bounded HTTP range reads with one reusable connection per file."""
+
+    def __init__(self, url: str, size: int, timeout_seconds: int) -> None:
+        super().__init__()
+        parsed = urlparse(url)
+        self._path = parsed.path + ("?" + parsed.query if parsed.query else "")
+        self._size = size
+        self._position = 0
+        self._connection = http.client.HTTPSConnection(parsed.hostname, timeout=timeout_seconds)
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        if whence == io.SEEK_CUR:
+            offset += self._position
+        elif whence == io.SEEK_END:
+            offset += self._size
+        elif whence != io.SEEK_SET:
+            raise ValueError("Invalid seek origin")
+        if offset < 0:
+            raise ValueError("Cannot seek before the file")
+        self._position = offset
+        return offset
+
+    def read(self, size: int = -1) -> bytes:
+        remaining = max(0, self._size - self._position)
+        size = remaining if size < 0 else min(size, remaining)
+        if not size:
+            return b""
+        start = self._position
+        end = start + size - 1
+        self._connection.request("GET", self._path, headers={
+            "Range": f"bytes={start}-{end}", "Accept-Encoding": "identity",
+            "User-Agent": "Songwriter/0.1.0",
+        })
+        response = self._connection.getresponse()
+        try:
+            if response.status != 206 or response.getheader("Content-Range") != f"bytes {start}-{end}/{self._size}":
+                raise RuntimeError("The licensed source did not honor a byte-range request")
+            data = response.read(size)
+            if len(data) != size:
+                raise RuntimeError("The licensed source returned an incomplete file range")
+        finally:
+            response.close()
+        self._position += size
+        return data
+
+    def close(self) -> None:
+        self._connection.close()
+        super().close()
+
+
+def _read_artist_file(url: str, artist: str, key: str, timeout_seconds: int,
+                      report: Callable[[int, int, bool], None],
+                      stopped: threading.Event) -> list[ReferenceSongInput]:
+    opener = build_opener(_LicensedRedirects())
+    with opener.open(Request(url, method="HEAD"), timeout=timeout_seconds) as response:
+        resolved = response.geturl()
+        size = int(response.headers["Content-Length"])
+    songs = []
+    with _RemoteParquet(resolved, size, timeout_seconds) as source, pq.ParquetFile(source) as parquet:
+        for group in range(parquet.num_row_groups):
+            if stopped.is_set():
+                return []
+            names = parquet.read_row_group(group, columns=["artist"], use_threads=False).column("artist")
+            normalized = pc.utf8_lower(names)
+            normalized = (pc.replace_substring_regex(normalized, _NON_ALNUM, "") if key
+                          else pc.utf8_trim_whitespace(normalized))
+            matching = pc.indices_nonzero(pc.equal(normalized, key or artist.lower()))
+            if len(matching):
+                # Only row groups containing this artist need their lyric columns.
+                records = parquet.read_row_group(
+                    group, columns=["title", "tag", "year", "lyrics"], use_threads=False,
+                ).take(matching)
+                records = records.append_column("artist", names.take(matching))
+                for record in records.to_pylist():
+                    try:
+                        songs.append(ReferenceSongInput(
+                            title=record["title"], artist=record["artist"], genre=record["tag"] or "misc",
+                            year=record["year"] or 0, lyrics=record["lyrics"],
+                        ))
+                    except ValidationError as exc:
+                        error = exc.errors(include_input=False)[0]
+                        raise RuntimeError(
+                            f"Invalid licensed record {record['title']!r}: {error['loc']} — {error['msg']}"
+                        ) from exc
+            report(len(names), len(matching), False)
+    report(0, 0, True)
+    return songs
 
 
 def load_artist(artist: str, timeout_seconds: int = 60,
@@ -56,53 +150,39 @@ def load_artist(artist: str, timeout_seconds: int = 60,
                 or parsed.username is not None or parsed.port not in (None, 443)
                 or not url.startswith(_EXPORT_ROOT + "/") or not parsed.path.endswith(".parquet")):
             raise RuntimeError("The licensed dataset returned an unexpected Parquet export URL")
-    if progress:
-        progress(f"Locating {len(exports)} licensed dataset files")
-    downloads = []
-    try:
-        for url in exports:
-            # Resolve once so Parquet range reads use the approved CDN directly
-            # instead of exhausting the Hub API's rate limit on every range.
-            with opener.open(Request(url, method="HEAD"), timeout=timeout_seconds) as response:
-                downloads.append(response.geturl())
-    except Exception as exc:
-        raise RuntimeError(f"Could not locate the licensed dataset files: {exc}") from exc
+
     key = "".join(char for char in artist.lower() if char.isalnum())
-    predicate = "regexp_replace(lower(artist), ?, '', 'g') = ?" if key else "lower(trim(artist)) = ?"
-    parameters = [downloads, _NON_ALNUM, key] if key else [downloads, artist.lower()]
-    try:
-        with duckdb.connect(":memory:", config=duckdb_config()) as conn:
-            if progress:
-                progress("Preparing the licensed dataset network reader")
-            conn.execute("SET extension_directory = ?", [_extension_cache().name])
-            conn.execute("INSTALL httpfs; LOAD httpfs")
-            conn.execute(f"SET http_timeout = {int(timeout_seconds)}; SET http_retries = 0; "
-                         "SET allow_asterisks_in_http_paths = true")
-            if progress:
-                progress(f"Finding matching artist names in all {len(exports)} licensed dataset files")
-            names = [
-                row[0] for row in conn.execute(
-                    f"SELECT DISTINCT artist FROM read_parquet(?) WHERE {predicate}", parameters,
-                ).fetchall()
-            ]
-            if not names:
-                return []
-            if progress:
-                progress(f"Fetching lyrics for {', '.join(names)} from all {len(exports)} dataset files")
-            # Filter the artist column first; only matching artists' lyric pages
-            # should be transferred, not the multi-gigabyte corpus of other songs.
-            placeholders = ", ".join("?" for _ in names)
-            rows = conn.execute(
-                "SELECT title, artist, tag, year, lyrics FROM read_parquet(?) "
-                f"WHERE artist IN ({placeholders}) ORDER BY title", [downloads, *names],
-            ).fetchall()
-    except duckdb.Error as exc:
-        raise RuntimeError(f"Could not read the licensed dataset: {exc}") from exc
-    songs = []
-    for title, name, genre, year, lyrics in rows:
+    lock = threading.Lock()
+    stopped = threading.Event()
+    checked = found = completed = 0
+
+    def report(rows: int, matches: int, finished: bool) -> None:
+        nonlocal checked, found, completed
+        if progress is None:
+            return
+        with lock:
+            checked += rows
+            found += matches
+            completed += int(finished)
+            progress(f"Checked {checked:,} reference records; {found} matching songs; "
+                     f"{completed}/{len(exports)} files complete")
+
+    if progress:
+        progress(f"Searching artist records in {len(exports)} licensed dataset files")
+    results: list[list[ReferenceSongInput]] = [[] for _ in exports]
+    # These are I/O workers, independent of the main database's CPU thread limit.
+    with ThreadPoolExecutor() as workers:
+        pending = {
+            workers.submit(_read_artist_file, url, artist, key, timeout_seconds, report, stopped): index
+            for index, url in enumerate(exports)
+        }
         try:
-            songs.append(ReferenceSongInput(title=title, artist=name, genre=genre or "misc", year=year or 0, lyrics=lyrics))
-        except ValidationError as exc:
-            error = exc.errors(include_input=False)[0]
-            raise RuntimeError(f"Invalid licensed record {title!r}: {error['loc']} — {error['msg']}") from exc
-    return songs
+            for future in as_completed(pending):
+                index = pending[future]
+                results[index] = future.result()
+        except Exception as exc:
+            stopped.set()
+            for future in pending:
+                future.cancel()
+            raise RuntimeError(f"Could not read licensed dataset file {index + 1}/{len(exports)}: {exc}") from exc
+    return sorted((song for records in results for song in records), key=lambda song: song.title)

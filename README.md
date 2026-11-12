@@ -186,11 +186,15 @@ lyrics refresh. No BPM, key, chords, audio, or MIDI is guessed from the lyrics.
 The completed import clears the MIDI-only filter and searches the source artist;
 click **Select Reference** on a resulting card.
 
-Imports run in the background and can take several minutes. Reloading the tab
-reconnects to progress; restarting the server interrupts an unfinished job.
-Network failures save no partial import. **Settings → Reference Imports** controls
-the per-request timeout (not the whole job duration). The first import downloads
-DuckDB's network reader into temporary storage.
+Imports run in the background and can take several minutes. Progress shows checked
+records, matching songs, and completed files rather than one unchanged scan message.
+Bounded I/O workers reuse HTTPS connections to scan the artist columns in every
+dataset file, then read lyric columns only for row groups containing a match.
+No DuckDB network extension download is required.
+
+Reloading the tab reconnects to progress; restarting the server interrupts an
+unfinished job. Network failures save no partial import. **Settings → Reference
+Imports** controls the per-request timeout, not the whole job duration.
 
 To supply a song yourself, enter its artist, title, and lyrics, then click
 **Save Reference Song**. Keep `[Verse]`, `[Chorus]`, and other section headings
