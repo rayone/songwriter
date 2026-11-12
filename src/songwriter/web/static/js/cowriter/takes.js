@@ -610,6 +610,7 @@ function discardAndStartOver() {
   state.takes = {};
   state.nextTakeId = 1;
   state.activeTakeId = null;
+  state.takeGroup = null;
   state.song = typeof deepClone === 'function' ? deepClone(defaultSongTemplate) : JSON.parse(JSON.stringify(defaultSongTemplate));
   syncDOMFromSong(state.song);
   const switcher = el('ws-take-switcher');
@@ -682,6 +683,12 @@ function beginTake(isNewTake, resetTakeId) {
   syncSongFromDOM(state.song);
   const clone = typeof deepClone === 'function' ? deepClone : obj => JSON.parse(JSON.stringify(obj));
   const takeSong = clone(state.song || {});
+  const firstTakeSongId = (state.takes[1] && state.takes[1].song && (state.takes[1].song.take_group || state.takes[1].song.song_id)) || (state.song && (state.song.take_group || state.song.song_id)) || '';
+  const currentGroup = state.takeGroup || firstTakeSongId || (previous && previous.song && previous.song.take_group) || (takeSong && takeSong.take_group) || '';
+  if (currentGroup) {
+    state.takeGroup = currentGroup;
+    takeSong.take_group = currentGroup;
+  }
   if (!isNewTake && previous && previous.song) {
     takeSong.song_id = previous.song.song_id || '';
     takeSong.revision = previous.song.revision || 0;
@@ -689,6 +696,9 @@ function beginTake(isNewTake, resetTakeId) {
     takeSong.song_id = '';
     takeSong.revision = 0;
     takeSong.take_number = 0;
+    if (state.takeGroup) {
+      takeSong.take_group = state.takeGroup;
+    }
   }
   takeSong.sections = [];
   takeSong.turns = [];
@@ -895,11 +905,23 @@ async function saveCurrentTake() {
   const clone = typeof deepClone === 'function' ? deepClone : obj => JSON.parse(JSON.stringify(obj));
   const songToSave = clone(currentTake.song);
   songToSave.title = val('gw-title') || songToSave.title || 'Untitled Song';
+  const firstTakeSongId = (state.takes[1] && state.takes[1].song && (state.takes[1].song.take_group || state.takes[1].song.song_id)) || (state.song && (state.song.take_group || state.song.song_id)) || '';
+  const takeGroup = state.takeGroup || songToSave.take_group || firstTakeSongId;
+  if (takeGroup) {
+    state.takeGroup = takeGroup;
+    songToSave.take_group = takeGroup;
+  }
   const prevRevision = songToSave.revision || 0;
   try {
     const savedSong = await postJSON('/api/crafted_songs', songToSave);
+    if (savedSong.take_group) {
+      state.takeGroup = savedSong.take_group;
+    }
     currentTake.song = clone(savedSong);
     state.song = clone(savedSong);
+    if (state.takes[1] && state.takes[1].song && !state.takes[1].song.take_group && state.takeGroup) {
+      state.takes[1].song.take_group = state.takeGroup;
+    }
     const takeNum = savedSong.take_number || 1;
     if (savedSong.revision === prevRevision && prevRevision > 0) {
       setStatus('gw-status', 'No changes since "' + savedSong.title + '" Take ' + takeNum + '. Edit or re-draft to save a new version.', 'yellow');

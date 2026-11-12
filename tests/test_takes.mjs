@@ -318,6 +318,14 @@ test('a new take keeps its canonical group but not the saved song identity or or
   assert.equal(take.song.take_number, 0);
 });
 
+test('a new take links to first take song_id or state.takeGroup when take_group was unset', () => {
+  const { c } = harness();
+  c.state.takes[1] = { takeId: 1, song: { song_id: 'song_first_take' } };
+  const take2 = c.beginTake(true);
+  assert.equal(take2.song.take_group, 'song_first_take');
+  assert.equal(c.state.takeGroup, 'song_first_take');
+});
+
 test('returning to lyrics retains the working model choice without rewriting the saved take', () => {
   const { c } = harness();
   const take = c.beginTake(false);

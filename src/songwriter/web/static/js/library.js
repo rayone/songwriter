@@ -219,6 +219,7 @@ async function loadCraftedSongIntoCowriter() {
   }
   const g = res;
   state.song = typeof deepClone === 'function' ? deepClone(g) : JSON.parse(JSON.stringify(g));
+  state.takeGroup = g.take_group || g.song_id || null;
   syncDOMFromSong(state.song);
 
   const takeSong = typeof deepClone === 'function' ? deepClone(g) : JSON.parse(JSON.stringify(g));

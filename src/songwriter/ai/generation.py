@@ -315,6 +315,16 @@ class SongGeneration(BaseModel):
     def has_abc(self) -> bool:
         return bool(self.abc_score.strip())
 
+    @computed_field
+    @property
+    def id(self) -> str:
+        return self.song_id
+
+    @computed_field
+    @property
+    def summary(self) -> str:
+        return self.brief or self.story or ""
+
     def planned_sections(self) -> list[str]:
         names = self.section_plan or parse_section_plan("standard")
         return names[: self.max_sections] if self.max_sections else list(names)

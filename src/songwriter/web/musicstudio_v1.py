@@ -32,7 +32,7 @@ from songwriter.ai.song_store import SongStore, _SONG_COLUMNS, ensure_schema
 from songwriter.db import workbench_db
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status as http_status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 from songwriter import config
 router = APIRouter(prefix="/v1", tags=["MusicStudio Integration"])
@@ -197,8 +197,60 @@ def to_utc_iso(dt: Any) -> str:
 # Pydantic Schemas matching contract
 # ===========================================================================
 
+def estimate_duration_hint_sec(
+    duration_hint: int | None,
+    lyrics: str | None,
+    bpm: float | int | None,
+) -> int:
+    if duration_hint is not None and duration_hint > 0:
+        return int(duration_hint)
+    tempo = float(bpm) if bpm and bpm > 0 else 120.0
+    words = len(re.findall(r"\b[\w'-]+\b", lyrics or ""))
+    if words > 0:
+        beats = (words * 1.4) + 64.0
+        sec = int(round(beats * (60.0 / tempo)))
+        return max(45, min(600, sec))
+    return 180
+
+
+class SongListItem(BaseModel):
+    id: str
+    song_id: str
+    revision: int = 1
+    status: str = "ready"
+    title: str = "Untitled Song"
+    artist: str = ""
+    brief: str = ""
+    summary: str = ""
+    genre: str = ""
+    subgenre: str = ""
+    language: str | None = "English"
+    instrumental: bool = False
+    duration_hint_sec: int
+    bpm: float | None = None
+    key: str | None = None
+    scale: str | None = None
+    time_signature: str = "4/4"
+    has_abc: bool = False
+    take_group: str = ""
+    take_number: int = 1
+    take_count: int = 1
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    rating: int | None = None
+    notes: str | None = None
+
+    @field_serializer("created_at", "updated_at", when_used="json")
+    def serialize_timestamp(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.astimezone()
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 class SongListResponse(BaseModel):
-    songs: list[SongGeneration]
+    songs: list[SongListItem]
     next_cursor: str | None = None
 
 class UploadRequest(BaseModel):
@@ -420,15 +472,47 @@ def list_songs(
 
     has_more = len(records) > limit
     effective_records = records[:limit]
-    songs = [SongStore._decode(rec) for rec in effective_records]
+    song_items: list[SongListItem] = []
+    for rec in effective_records:
+        song = SongStore._decode(rec)
+        dur = estimate_duration_hint_sec(song.duration_hint_sec, song.lyrics, song.bpm)
+        song_items.append(
+            SongListItem(
+                id=song.song_id,
+                song_id=song.song_id,
+                revision=song.revision,
+                status=song.status or "ready",
+                title=song.title or "Untitled Song",
+                artist=song.artist or "",
+                brief=song.brief or "",
+                summary=song.brief or song.story or "",
+                genre=song.genre or "",
+                subgenre=song.subgenre or "",
+                language=song.language or "English",
+                instrumental=song.instrumental,
+                duration_hint_sec=dur,
+                bpm=song.bpm,
+                key=song.key,
+                scale=song.scale,
+                time_signature=song.time_signature or "4/4",
+                has_abc=song.has_abc,
+                take_group=song.take_group or song.song_id,
+                take_number=song.take_number or 1,
+                take_count=song.take_count or 1,
+                created_at=song.created_at,
+                updated_at=song.updated_at,
+                rating=song.rating,
+                notes=song.notes,
+            )
+        )
 
     next_cursor = None
-    if has_more and songs:
-        last_song = songs[-1]
-        last_updated = last_song.updated_at or datetime.now(timezone.utc)
-        next_cursor = encode_cursor(last_updated, last_song.song_id)
+    if has_more and song_items:
+        last_item = song_items[-1]
+        last_updated = last_item.updated_at or datetime.now(timezone.utc)
+        next_cursor = encode_cursor(last_updated, last_item.song_id)
 
-    result = SongListResponse(songs=songs, next_cursor=next_cursor)
+    result = SongListResponse(songs=song_items, next_cursor=next_cursor)
     etag = 'W/"' + hashlib.sha256(result.model_dump_json().encode("utf-8")).hexdigest()[:16] + '"'
     response.headers["ETag"] = etag
     response.headers["Cache-Control"] = "private, must-revalidate, max-age=5"
