@@ -317,12 +317,18 @@ def test_list_songs_exposes_canonical_models_and_take_grouping(store: SongStore,
     assert "take_1" in song_ids
     assert "take_2" in song_ids
     assert "other_song" not in song_ids
+    # Lean summary shape: heavy generation telemetry excluded, duration_hint_sec estimated, id key present
+    for s in data["songs"]:
+        assert "id" in s and "song_id" in s
+        assert s["id"] == s["song_id"]
+        assert isinstance(s.get("duration_hint_sec"), int) and s["duration_hint_sec"] > 0
+        for heavy in ("chat_history", "diagnostics", "analytics", "turns", "banned_words", "banned_pairs", "questions", "answers", "sections"):
+            assert heavy not in s, f"Heavy field {heavy} must not be dumped in list response"
 
     # Check take grouping across the library
     for s in data["songs"]:
         if s["take_group"] == group_id:
             assert s["take_count"] == 2
-
     # 2. Filter by genre
     res_genre = client.get("/v1/songs?genre=Jazz&status=all")
     assert res_genre.status_code == 200
