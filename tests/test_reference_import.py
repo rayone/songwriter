@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from songwriter.ai.cowriter import SongwriterCowriter
+from songwriter.ai.generation import SongGeneration
 from songwriter.corpus.references import ReferenceSongInput, ReferenceStore
 from songwriter.corpus.search import SongSearcher
 from songwriter.corpus.artist_imports import ArtistImportManager, ImportInProgress
@@ -164,10 +165,10 @@ def test_recommendations_use_supplied_tempo_without_corpus_or_invented_midi(cata
     writer = SongwriterCowriter()
     writer._wb = wb
     writer.studio_db.db_path = tmp_path / "absent.duckdb"
-    recs = writer.recommend_reference_songs(genre="Darkwave", bpm=125, key="F#", scale="minor", limit=20)
+    recs = writer.recommend_reference_songs(SongGeneration(genre="Darkwave", bpm=125, key="F#", scale="minor"), limit=20)
     imported = [r for r in recs if r["song_id"] in result["song_ids"]]
     assert [(r["song_id"], r["bpm"], r["has_midi"]) for r in imported] == [(result["song_ids"][0], 125, False)]
-    midi = writer.recommend_reference_songs(genre="Darkwave", bpm=125, has_midi=True, limit=20)
+    midi = writer.recommend_reference_songs(SongGeneration(genre="Darkwave", bpm=125), has_midi=True, limit=20)
     assert not any(r["song_id"] in result["song_ids"] for r in midi)
 
 

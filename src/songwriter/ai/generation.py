@@ -6,7 +6,7 @@ saved as one JSON document and loaded back into an identical object.
 
 Rules:
   * one field per fact -- no ``final_*`` / ``sec_*`` copies anywhere else;
-  * priority is applied once, in ``from_request``:
+  * priority is applied once, in ``resolve_inputs``:
         Step 3 answer -> Step 2 control -> reference song -> template default;
   * per-section / per-line syllable windows are computed on demand by
     ``line_window`` and never stored.
@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import asdict, dataclass, field, fields
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, ClassVar
+
+from pydantic import BaseModel, ConfigDict, Field as field, computed_field, field_serializer, field_validator, model_validator
 
 from songwriter.corpus.ingest import normalize_section
 
@@ -109,6 +111,8 @@ _TECHNICAL_ANSWERS = frozenset({
     "genre", "vocal", "vocal_type", "arrangement", "bpm", "musical_key", "scale",
     "syllable_target", "rhyme_scheme", "section_plan", "section_lines", "lines_per_turn",
     "validation_mode", "required_tone", "correction_strictness",
+    "language", "subgenre", "moods", "mood", "instruments", "instrumentation",
+    "time_signature", "duration_hint_sec", "vocal_style",
     "rhyme_sound_verse", "rhyme_sound_chorus", "rhyme_sound_bridge",
 })
 
@@ -178,8 +182,11 @@ def _clean_genre(value: str | None) -> str:
     return str(value or "").split(",")[0].split("(")[0].strip()
 
 
-@dataclass
-class SongGeneration:
+class SongGeneration(BaseModel):
+    """The song document used by authoring, storage, the web app, and the API."""
+
+    model_config = ConfigDict(extra="forbid")
+
     # --- identity ----------------------------------------------------------
     song_id: str = ""
     revision: int = 0
@@ -189,7 +196,12 @@ class SongGeneration:
     # (its own single take). Persisted in the generation JSON, surfaced by the API.
     take_group: str = ""
     take_number: int = 0
-    status: str = "draft"
+    status: str | None = "draft"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    take_count: int = 1
+    rating: int | None = None
+    notes: str | None = None
     title: str = "Untitled Song"
     artist: str = ""
     brief: str = ""
@@ -199,12 +211,16 @@ class SongGeneration:
     model: str = ""
 
     # --- music ---------------------------------------------------------------
+    language: str | None = None
     bpm: int = 92
     key: str = "C"
     scale: str = "major"
     genre: str = "Pop"
     subgenre: str = ""
     style: str = ""
+    moods: list[str] = field(default_factory=list)
+    instruments: list[str] = field(default_factory=list)
+    duration_hint_sec: int | None = None
     vocal: str = "melodic lead"
     vocal_roles: dict[str, str] = field(default_factory=dict)
     time_signature: str = "4/4"
@@ -227,8 +243,8 @@ class SongGeneration:
     # How many lines the model drafts per turn: 1, 2, or 0 = the whole section
     # in one pass (so it can shape a 4-bar block, e.g. a short punchy line 4).
     lines_per_turn: int = 2
-    # "auto": the validation function accepts lines; "human": the writer accepts each turn.
-    validation_mode: str = "auto"
+    # The lyric critic, deterministic rules alone, or the writer accepts each turn.
+    validation_mode: str = "auto_llm"
 
     # --- rhyme & register ------------------------------------------------------
     rhyme_scheme: str = "free"
@@ -249,6 +265,14 @@ class SongGeneration:
     # retries, meter+rhyme only), "balanced" (adds cliche advisories), "polished"
     # (adds cliche + melodic-delta as hard failures, most retries).
     correction_strictness: str = "balanced"
+    mode: str = "creator"
+    temperature: float = 0.7
+    top_p: float = 0.9
+    max_tokens: int = 900
+    poetic_form: str | None = None
+    section_by_section: bool = True
+    author_engine_prompt: bool = True
+    chat_history: list[dict[str, str]] = field(default_factory=list)
 
     # --- Step 4 output ---------------------------------------------------------
     sections: list[dict[str, Any]] = field(default_factory=list)
@@ -256,6 +280,13 @@ class SongGeneration:
     engine_prompts: dict[str, str] = field(default_factory=dict)
     engine_target: str = "standard"
     analytics: dict[str, Any] = field(default_factory=dict)
+    engine_prompt_author: str = ""
+    engine_prompt_section_arc: str = ""
+    system_prompt: str = ""
+    user_prompt: str = ""
+    turns: list[dict[str, Any]] = field(default_factory=list)
+    incomplete_sections: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     # ------------------------------------------------------------- derived
 
@@ -263,6 +294,7 @@ class SongGeneration:
     def syllable_target(self) -> int:
         return (self.syllable_min + self.syllable_max) // 2
 
+    @computed_field
     @property
     def lyrics(self) -> str:
         parts: list[str] = []
@@ -271,6 +303,17 @@ class SongGeneration:
             parts.extend(sec.get("lines") or [])
             parts.append("")
         return "\n".join(parts).strip()
+
+    @computed_field
+    @property
+    def instrumental(self) -> bool:
+        vocal = self.vocal.strip().lower()
+        return vocal in {"none", "no vocals"} or "instrumental" in vocal
+
+    @computed_field
+    @property
+    def has_abc(self) -> bool:
+        return bool(self.abc_score.strip())
 
     def planned_sections(self) -> list[str]:
         names = self.section_plan or parse_section_plan("standard")
@@ -476,223 +519,214 @@ class SongGeneration:
 
     # --------------------------------------------------------- construction
 
+    @field_serializer("created_at", "updated_at", when_used="json")
+    def serialize_timestamp(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @model_validator(mode="before")
     @classmethod
-    def from_request(
-        cls,
-        *,
-        template_defaults: dict[str, Any],
-        model: str,
-        prompt: str = "",
-        title: str | None = None,
-        style: str | None = None,
-        genre: str | None = None,
-        template_id: int | None = None,
-        bpm: int | float | None = None,
-        music_key: str | None = None,
-        scale: str | None = None,
-        vocal: str | None = None,
-        vocal_roles: dict[str, str] | None = None,
-        reference_song: dict[str, Any] | None = None,
-        banned_words: list[str] | None = None,
-        rhyme_scheme: str | None = None,
-        section_plan: str | None = None,
-        syllable_target: str | None = None,
-        answers: dict[str, Any] | None = None,
-        questions: list[dict[str, Any]] | None = None,
-        story: str | None = None,
-        max_retries: int = 5,
-        max_sections: int | None = None,
-    ) -> SongGeneration:
-        """Build the generation, applying priority exactly once per fact."""
-        if not (model or "").strip():
+    def read_document(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        # Derived exports are read-only, never another editable value.
+        for name in cls.model_computed_fields:
+            data.pop(name, None)
+        answers = data.get("answers")
+        if isinstance(answers, dict):
+            questions = list(data.get("questions") or [])
+            question_ids = {q.get("id") for q in questions if isinstance(q, dict)}
+            normalized = {}
+            for qid, answer in answers.items():
+                if isinstance(answer, dict):
+                    if answer.get("question") and qid not in question_ids:
+                        questions.append({"id": qid, "question": answer["question"]})
+                    answer = answer.get("answer")
+                normalized[qid] = str(answer if answer is not None else "").strip()
+            data["answers"] = normalized
+            data["questions"] = questions
+        return data
+
+    @field_validator("section_plan", mode="before")
+    @classmethod
+    def read_section_plan(cls, value: Any) -> Any:
+        return parse_section_plan(value) if isinstance(value, str) else value
+
+    def resolve_inputs(self, template_defaults: dict[str, Any]) -> SongGeneration:
+        """Resolve Steps 1–3 once on this instance, never when reading a saved song."""
+        if not self.model.strip():
             raise ValueError("A model must be selected before generating.")
+        provided = frozenset(self.model_fields_set)
         tmpl = template_defaults or {}
-        ref = reference_song or {}
+        ref = self.reference_song or {}
+        ans = self.answers
+        self.model = self.model.strip()
+        self.title = self.title.strip() or "Untitled Song"
 
-        ans: dict[str, str] = {}
-        asked: dict[str, str] = {}
-        for qid, item in (answers or {}).items():
-            if isinstance(item, dict):
-                ans[qid] = str(item.get("answer") or "").strip()
-                if item.get("question"):
-                    asked[qid] = str(item["question"])
-            else:
-                ans[qid] = str(item or "").strip()
-        q_defs = [
-            {
-                "id": str(q["id"]),
-                "question": str(q.get("question") or q["id"]),
-                "why": str(q.get("why") or ""),
-                "options": [str(o) for o in (q.get("options") or [])],
-                "category": str(q.get("category") or "creative"),
-            }
-            for q in (questions or []) if isinstance(q, dict) and q.get("id")
-        ] or [
-            {"id": qid, "question": text, "why": "", "options": [ans.get(qid, "")], "category": "creative"}
-            for qid, text in asked.items()
-        ]
+        self.bpm = (_first_int(ans.get("bpm"))
+                    or (self.bpm if "bpm" in provided else None)
+                    or _first_int(ref.get("tempo_bpm") or ref.get("bpm"))
+                    or _first_int(tmpl.get("bpm")) or 92)
+        key_answer = ans.get("musical_key", "").split()
+        self.key = ((key_answer[0] if key_answer else None)
+                    or (self.key if "key" in provided else None)
+                    or ref.get("musical_key") or ref.get("key") or tmpl.get("music_key") or "C")
+        self.scale = ((key_answer[1].strip("()").lower() if len(key_answer) > 1 else None)
+                      or ans.get("scale") or (self.scale if "scale" in provided else None)
+                      or ref.get("scale") or tmpl.get("scale") or "major")
+        self.genre = (ans.get("genre") or (self.genre if "genre" in provided else None)
+                      or _clean_genre(self.style) or _clean_genre(tmpl.get("genre"))
+                      or _clean_genre(ref.get("genre")) or "Pop")
+        self.subgenre = (ans.get("subgenre") or self.subgenre
+                         or tmpl.get("subgenre") or "")
+        self.language = ans.get("language") or self.language or tmpl.get("language") or "English"
+        for name, answer_ids in (("moods", ("moods", "mood", "target_mood")),
+                                 ("instruments", ("instruments", "instrumentation"))):
+            answer = next((ans[k] for k in answer_ids if ans.get(k)), "")
+            if answer:
+                setattr(self, name, [v.strip() for v in re.split(r"[,;\n]", answer) if v.strip()])
+            elif not getattr(self, name) and tmpl.get(name):
+                value = tmpl[name]
+                setattr(self, name, value if isinstance(value, list) else
+                        [v.strip() for v in str(value).split(",") if v.strip()])
+        self.time_signature = (ans.get("time_signature")
+                               or (self.time_signature if "time_signature" in provided else None)
+                               or ref.get("time_signature") or tmpl.get("time_signature") or "4/4")
+        if ans.get("duration_hint_sec"):
+            self.duration_hint_sec = _first_int(ans["duration_hint_sec"])
+        elif self.duration_hint_sec is None and tmpl.get("duration_hint_sec") is not None:
+            self.duration_hint_sec = int(tmpl["duration_hint_sec"])
+        self.vocal = (ans.get("vocal") or ans.get("vocal_style")
+                      or (self.vocal if "vocal" in provided else None)
+                      or tmpl.get("vocal") or "melodic lead")
+        if self.vocal.lower() == "duet" and not self.vocal_roles:
+            self.vocal_roles = {"singer_a": "Singer A (Male Vocal)", "singer_b": "Singer B (Female Vocal)"}
 
-        # Music: Step 3 answer -> Step 2 control -> reference -> template.
-        res_bpm = (_first_int(ans.get("bpm")) or (int(round(bpm)) if bpm else None)
-                   or _first_int(ref.get("tempo_bpm") or ref.get("bpm"))
-                   or _first_int(tmpl.get("bpm")) or 92)
-        key_ans = ans.get("musical_key", "").split()
-        res_key = (key_ans[0] if key_ans else None) or music_key or ref.get("musical_key") or tmpl.get("music_key") or "C"
-        res_scale = ((key_ans[1].strip("()").lower() if len(key_ans) > 1 else None)
-                     or scale or ref.get("scale") or tmpl.get("scale") or "major")
-        # A reference can lend structure without dictating the recording's genre.
-        res_genre = (ans.get("genre") or (genre or "").strip() or _clean_genre(style)
-                     or _clean_genre(tmpl.get("genre")) or _clean_genre(ref.get("genre")) or "Pop")
-        vocal_ans = ans.get("vocal", "").split(" ")[0].lower() if ans.get("vocal") else ""
-        res_vocal = vocal_ans or vocal or tmpl.get("vocal") or "melodic lead"
-        roles = dict(vocal_roles or {})
-        if res_vocal == "duet" and not roles:
-            roles = {"singer_a": "Singer A (Male Vocal)", "singer_b": "Singer B (Female Vocal)"}
-
-        # Step 3 "Follow reference ..." answers keep that part of the reference's shape.
-        # With no answer at all, a reference with sections is followed by default.
         def follows(qid: str) -> bool:
             return ans.get(qid, "").lower().startswith(FOLLOW_REFERENCE.lower())
 
         ref_sections = [s for s in ref.get("sections") or [] if isinstance(s, dict)]
         ref_names = [str(s.get("name") or "Section") for s in ref_sections]
-
-        # Structure.
         if follows("section_plan") and ref_names:
-            plan = ref_names
+            self.section_plan = ref_names
         else:
-            plan = parse_section_plan(ans.get("section_plan")) or parse_section_plan(section_plan) or ref_names
-        plan = plan or parse_section_plan(tmpl.get("section_plan") or "standard")
+            self.section_plan = parse_section_plan(ans.get("section_plan")) or self.section_plan or ref_names
+        self.section_plan = self.section_plan or parse_section_plan(tmpl.get("section_plan") or "standard")
 
-        # Lines per section.
-        lines_ans = ans.get("section_lines", "")
-        follow_lines = bool(ref_sections) and (follows("section_lines") or not lines_ans)
-        sec_lines = 4 if follows("section_lines") else (_first_int(lines_ans) or 4)
-        sec_lines = max(2, min(16, sec_lines))
+        answer = ans.get("section_lines", "")
+        if answer:
+            self.follow_reference_lines = bool(ref_sections) and follows("section_lines")
+        elif "follow_reference_lines" not in provided:
+            self.follow_reference_lines = bool(ref_sections) and "section_lines" not in provided
+        self.section_lines = max(2, min(16, 4 if follows("section_lines") else
+                                       (_first_int(answer) or self.section_lines)))
+        answer = ans.get("lines_per_turn", "").lower()
+        if any(word in answer for word in ("whole", "section", "entire")):
+            self.lines_per_turn = 0
+        elif "1" in answer:
+            self.lines_per_turn = 1
+        elif answer:
+            self.lines_per_turn = 2
+        answer = ans.get("validation_mode", "").lower()
+        if answer:
+            self.validation_mode = ("human" if "human" in answer else
+                                    "auto_songwriter" if "songwriter" in answer else "auto_llm")
+        elif "validation_mode" not in provided:
+            self.validation_mode = "auto_llm"
+        answer = ans.get("correction_strictness", "").lower()
+        if answer:
+            self.correction_strictness = ("draft" if any(v in answer for v in ("draft", "light", "low")) else
+                                         "polished" if any(v in answer for v in ("polish", "strict", "high")) else "balanced")
+        if self.max_retries == 5:
+            self.max_retries = {"draft": 2, "polished": 6}.get(self.correction_strictness, 4)
 
-        # How many lines the model drafts per turn.
-        lpt_ans = ans.get("lines_per_turn", "").lower()
-        if "whole" in lpt_ans or "section" in lpt_ans or "entire" in lpt_ans:
-            lines_per_turn = 0
-        elif "1" in lpt_ans:
-            lines_per_turn = 1
-        else:
-            lines_per_turn = 2
-
-        # Who accepts each turn: "auto_llm" (hybrid), "auto_songwriter" (rules only), or "human".
-        v_ans = ans.get("validation_mode", "").lower()
-        if "human" in v_ans:
-            validation_mode = "human"
-        elif "songwriter" in v_ans:
-            validation_mode = "auto_songwriter"
-        else:
-            validation_mode = "auto_llm"
-        # How aggressively the validator corrects/reinforms the model. The tier
-        # sets the retry budget and which checks run (see stream loop).
-        cs_ans = ans.get("correction_strictness", "").lower()
-        if "draft" in cs_ans or "light" in cs_ans or "low" in cs_ans:
-            correction_strictness, cs_retries = "draft", 2
-        elif "polish" in cs_ans or "strict" in cs_ans or "high" in cs_ans:
-            correction_strictness, cs_retries = "polished", 6
-        else:
-            correction_strictness, cs_retries = "balanced", 4
-        # The tier owns the retry budget unless the caller passed a non-default.
-        if max_retries == 5:
-            max_retries = cs_retries
-
-        # Meter.
         if follows("syllable_target"):
-            user_range = None
-            follow_syl = bool(ref_sections)
+            self.follow_reference_syllables = bool(ref_sections)
         else:
-            user_range = parse_syllable_range(ans.get("syllable_target")) or parse_syllable_range(syllable_target)
-            follow_syl = bool(ref_sections) and user_range is None
-        syl_min, syl_max = user_range or parse_syllable_range(tmpl.get("syllable_target")) or (8, 10)
-
-        # Rhyme scheme.
+            syllables = parse_syllable_range(ans.get("syllable_target"))
+            if syllables:
+                self.follow_reference_syllables = False
+            elif "follow_reference_syllables" not in provided:
+                self.follow_reference_syllables = bool(ref_sections) and not (
+                    {"syllable_min", "syllable_max"} & provided)
+            if not syllables and not ({"syllable_min", "syllable_max"} & provided):
+                syllables = parse_syllable_range(tmpl.get("syllable_target"))
+            if syllables:
+                self.syllable_min, self.syllable_max = syllables
         if follows("rhyme_scheme"):
-            scheme = "free"
-            follow_rhyme = bool(ref_sections)
+            self.rhyme_scheme = "free"
+            self.follow_reference_rhyme = bool(ref_sections)
         else:
-            scheme = ans.get("rhyme_scheme", "").split(" ")[0] or rhyme_scheme or ""
-            follow_rhyme = bool(ref_sections) and not scheme
-            scheme = scheme or tmpl.get("rhyme_scheme") or "free"
+            scheme = ans.get("rhyme_scheme", "").split(" ")[0]
+            if scheme:
+                self.follow_reference_rhyme = False
+            elif "follow_reference_rhyme" not in provided:
+                self.follow_reference_rhyme = bool(ref_sections) and "rhyme_scheme" not in provided
+            self.rhyme_scheme = scheme or (self.rhyme_scheme if "rhyme_scheme" in provided else None) or tmpl.get("rhyme_scheme") or "free"
 
-        # Register & filters.
-        reg = ans.get("rhyme_register", "").lower()
-        off = ans.get("offensive_language", "").lower()
-        phr = ans.get("allow_phrases", "").lower()
-        banned_ans = ans.get("banned", "").lower()
-        extra_banned = [b.strip() for b in (banned_words or []) if str(b).strip()]
-        if "none" in banned_ans:
-            banned: list[str] = list(extra_banned)
-        elif "top-3" in banned_ans or "essential" in banned_ans:
-            banned = ["night/light", "fire/desire", "heart/apart"] + extra_banned
-        elif banned_ans:
-            banned = list(DEFAULT_BANNED) + extra_banned
-        else:
-            raw_b = banned_words if banned_words is not None else tmpl.get("banned_words", DEFAULT_BANNED)
-            banned = [b.strip() for b in raw_b if str(b).strip()]
+        register = ans.get("rhyme_register", "").lower()
+        offensive = ans.get("offensive_language", "").lower()
+        phrases = ans.get("allow_phrases", "").lower()
+        if register:
+            self.allow_slang = "slang" in register or "vernacular" in register or "all" in register
+        if offensive or register:
+            self.allow_offensive = any(v in offensive for v in ("explicit", "raw", "mild")) or "explicit" in register
+        if phrases:
+            self.allow_phrases = "yes" in phrases or "include" in phrases
+        banned = ans.get("banned", "").lower()
+        extra_banned = [pair for pair in self.banned_pairs if pair not in DEFAULT_BANNED] if banned else []
+        if "none" in banned:
+            self.banned_pairs = extra_banned
+        elif "top-3" in banned or "essential" in banned:
+            self.banned_pairs = list(DEFAULT_BANNED[:3]) + extra_banned
+        elif banned:
+            self.banned_pairs = list(DEFAULT_BANNED) + extra_banned
+        elif "banned_pairs" not in provided:
+            self.banned_pairs = list(tmpl.get("banned_words", DEFAULT_BANNED))
+        if not self.chords:
+            self.chords = [str(c) for c in ref.get("chords") or []]
+        if not self.abc_score:
+            self.abc_score = ref.get("abc_score") or ""
+        if self.template_id is None:
+            self.template_id = tmpl.get("template_id")
+        return self
 
-        # Only real chord data; the corpus has it for songs with imported MIDI.
-        chords = [str(c) for c in ref.get("chords") or []]
-
-        return cls(
-            title=(title or "").strip() or "Untitled Song",
-            brief=prompt or "",
-            story=(story or "").strip(),
-            model=model.strip(),
-            bpm=int(res_bpm),
-            key=str(res_key),
-            scale=str(res_scale),
-            genre=res_genre,
-            style=style or "",
-            vocal=res_vocal,
-            vocal_roles=roles,
-            time_signature=ref.get("time_signature") or "4/4",
-            chords=chords,
-            abc_score=ref.get("abc_score") or "",
-            template_id=template_id if template_id is not None else tmpl.get("template_id"),
-            reference_song=reference_song,
-            section_plan=plan,
-            max_sections=max_sections,
-            syllable_min=syl_min,
-            syllable_max=syl_max,
-            follow_reference_syllables=follow_syl,
-            follow_reference_lines=follow_lines,
-            follow_reference_rhyme=follow_rhyme,
-            section_lines=sec_lines,
-            lines_per_turn=lines_per_turn,
-            validation_mode=validation_mode,
-            rhyme_scheme=scheme,
-            allow_slang="slang" in reg or "vernacular" in reg or "all" in reg,
-            allow_offensive="explicit" in off or "raw" in off or "mild" in off or "explicit" in reg,
-            allow_phrases=("yes" in phr or "include" in phr or not phr),
-            banned_pairs=banned,
-            answers=ans,
-            questions=q_defs,
-            max_retries=max_retries,
-            correction_strictness=correction_strictness,
-        )
+    def start_draft(self) -> SongGeneration:
+        """Start new output on this song without erasing its production choices."""
+        for name in (
+            "status", "sections", "turns", "incomplete_sections", "analytics", "diagnostics",
+            "engine_prompts", "engine_prompt_author", "engine_prompt_section_arc",
+            "system_prompt", "user_prompt",
+        ):
+            setattr(self, name, type(self).model_fields[name].get_default(call_default_factory=True))
+        return self
 
     # ------------------------------------------------------------ persistence
 
     # Row lifecycle facts live in their own DB columns, not in the JSON,
     # so each is stored exactly once.
-    ROW_FIELDS = ("song_id", "revision", "status")
+    ROW_FIELDS: ClassVar[tuple[str, ...]] = (
+        "song_id", "revision", "status", "created_at", "updated_at", "take_count", "rating", "notes",
+    )
 
     def to_record(self) -> dict[str, Any]:
-        """The JSON document stored in songs.generation (plus rendered lyrics for search)."""
-        rec = asdict(self)
-        for k in self.ROW_FIELDS:
-            rec.pop(k, None)
-        rec["lyrics"] = self.lyrics
-        return rec
+        """Persist each fact once. Lyrics and row lifecycle values are not copied."""
+        return self.model_dump(mode="json", exclude=set(self.ROW_FIELDS), exclude_computed_fields=True)
 
     @classmethod
     def from_record(cls, rec: dict[str, Any], **row: Any) -> SongGeneration:
-        """Rebuild from the JSON document; ``row`` supplies song_id/revision/status."""
-        names = {f.name for f in fields(cls)}
-        data = {k: v for k, v in (rec or {}).items() if k in names}
-        data.update({k: v for k, v in row.items() if k in names and v is not None})
-        return cls(**data)
+        """Load the stored document without resolving inputs or authoring anything."""
+        data = dict(rec or {})
+        for name, value in row.items():
+            if value is not None or name not in data:
+                data[name] = value
+        song = cls.model_validate(data)
+        if song.song_id:
+            song.take_group = song.take_group or song.song_id
+            if song.take_number <= 0:
+                song.take_number = 1
+        return song

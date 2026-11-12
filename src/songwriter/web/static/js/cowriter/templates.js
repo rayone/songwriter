@@ -174,17 +174,19 @@ async function selectTemplateById(e, templateId) {
 }
 // Show a template as the selected sound profile without touching any specs.
 // Used when reopening a saved song, whose saved BPM/key/vocal must win.
-async function showTemplateCard(templateId) {
+async function showTemplateCard(templateId, preserveStyle = false) {
   const tmpl = await getJSON('/api/templates/' + templateId);
   if (!tmpl) return null;
   state.activeTemplate = tmpl;
   const meta = tmpl.metadata || {};
-  el('gw-selected-template-id').value = meta.id;
+  const tmplIdEl = el('gw-selected-template-id');
+  if (tmplIdEl) tmplIdEl.value = meta.id;
 
   const card = el('gw-selected-template-card');
   if (card) {
     card.style.display = 'block';
-    el('gw-card-tmpl-title').innerText = meta.title || 'Production Template';
+    const titleEl = el('gw-card-tmpl-title');
+    if (titleEl) titleEl.innerText = meta.title || 'Production Template';
     const badgesEl = el('gw-card-tmpl-badges');
     if (badgesEl) {
       badgesEl.innerHTML = `
@@ -204,21 +206,28 @@ async function showTemplateCard(templateId) {
     }
   }
   const omnibox = el('gw-style-input');
-  if (omnibox) omnibox.value = meta.audio_prompt || meta.title;
+  if (omnibox && !preserveStyle) omnibox.value = meta.audio_prompt || meta.title;
   const clearBtn = el('gw-template-clear-btn');
   if (clearBtn) clearBtn.style.display = 'inline-block';
   return tmpl;
 }
-function clearActiveTemplate() {
+function clearActiveTemplate(preserveStyle = false) {
   state.activeTemplate = null;
-  el('gw-selected-template-id').value = '';
+  const tmplInput = el('gw-selected-template-id');
+  if (tmplInput) tmplInput.value = '';
+  if (state.song) state.song.template_id = null;
   const card = el('gw-selected-template-card');
   if (card) card.style.display = 'none';
-  const omnibox = el('gw-style-input');
-  if (omnibox) omnibox.value = '';
+  if (!preserveStyle) {
+    const omnibox = el('gw-style-input');
+    if (omnibox) omnibox.value = '';
+    if (state.song) state.song.style = '';
+  }
   const clearBtn = el('gw-template-clear-btn');
   if (clearBtn) clearBtn.style.display = 'none';
-  loadTemplatesForDropdown('', activeTemplateGenreFilter);
+  if (!preserveStyle && typeof loadTemplatesForDropdown === 'function') {
+    loadTemplatesForDropdown('', activeTemplateGenreFilter);
+  }
 }
 document.addEventListener('click', function(e) {
   const container = el('gw-search-selection-container');
@@ -240,11 +249,19 @@ function defaultsFromMeta(meta) {
     audio_prompt: meta.audio_prompt,
     pro_tip: meta.pro_tip,
     syllable_target: val('gw-syllables') || '8-10',
-    banned_words: state.defaults.banned_words || []
+    banned_words: (state.song && state.song.banned_pairs) || []
   };
 }
 function applyDefaults(defaults) {
-  state.defaults = defaults || {};
+  if (state.song) {
+    if (defaults.bpm != null) state.song.bpm = defaults.bpm;
+    if (defaults.music_key) state.song.key = defaults.music_key;
+    if (defaults.scale) state.song.scale = defaults.scale;
+    if (defaults.vocal) state.song.vocal = defaults.vocal;
+    if (defaults.genre) state.song.genre = defaults.genre;
+    if (defaults.subgenre) state.song.subgenre = defaults.subgenre;
+    if (defaults.template_id != null) state.song.template_id = defaults.template_id;
+  }
   setFieldValue('gw-bpm', defaults.bpm);
   setFieldValue('gw-key', defaults.music_key);
   setFieldValue('gw-scale', defaults.scale);
@@ -255,6 +272,7 @@ function applyDefaults(defaults) {
     el('gw-banned').value = defaults.banned_words.join(', ');
   }
   onVocalChanged();
+  syncSongFromDOM(state.song);
   const info = el('gw-matched-info');
   if (info) {
     info.innerText = defaults.template_title

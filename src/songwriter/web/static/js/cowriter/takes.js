@@ -1,9 +1,8 @@
 // Cowriter Step 4: interactive drafting, takes and saving.
 
-// The model name shown in labels. Prefer the model a take actually ran with,
-// falling back to the current selection so labels never read a bare "the LLM".
+// Label the model that actually ran the take; never borrow another draft's model.
 function modelLabel(modelName) {
-  const name = (modelName || state.selectedModel || (el('gw-model') && el('gw-model').value) || '').trim();
+  const name = (modelName || '').trim();
   return name || 'the model';
 }
 
@@ -101,7 +100,7 @@ function copyChatTranscript(btn) {
 
   const cards = chatWindow.querySelectorAll('.turn-card');
   const out = [];
-  const label = modelLabel(take.model);
+  const label = modelLabel(take.song?.model);
 
   cards.forEach(function(card) {
     const eyebrow = (card.querySelector('.eyebrow')?.textContent || '').trim();
@@ -187,23 +186,22 @@ function analysisPanelInner(passed, scan, issues, critical_violations, advisorie
 
 async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
   const params = currentParams();
-  if (!params.prompt) {
+  const brief = params.brief;
+  if (!brief) {
     setStatus('gw-status', 'Please enter a song brief in Step 1 first.', 'yellow');
     return;
   }
   const take = beginTake(isNewTake, resetTakeId);
   const takeId = take.takeId;
-  params.song_id = take.songId || params.song_id;
-  const answer = params.answers && params.answers.validation_mode;
-  const mode = String((answer && answer.answer) || answer || '').toLowerCase();
+  const song = take.song;
+  const answer = song.answers && song.answers.validation_mode;
+  const mode = String(answer || song.validation_mode || '').toLowerCase();
   if (mode.indexOf('human') !== -1) {
-    return runHumanReview(take, params);
+    return runHumanReview(take, song);
   }
-  params.story = val('gw-storyline-text') || state.storyline || '';
-  params.max_sections = null;
-  params.max_retries = 3;
   const chatWindow = take.chatPane;
   const lyricsContent = take.lyricsPane;
+  take.lyricsPane.innerHTML = '';
   const abort = take.abort;
   takeStatus(take, 'Streaming turns: prompt, response, and validation live...', 'yellow');
 
@@ -211,7 +209,7 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
     const response = await fetch('/api/ai/draft_stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      body: JSON.stringify(song),
       signal: abort.signal
     });
     if (!response.ok) {
@@ -267,16 +265,16 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
               <div class="eyebrow c-dim">
                 Turn ${ev.turn_id}: [${escapeHtml(ev.section || '')}] ${escapeHtml(ev.turn_type || '')} · Attempt ${ev.attempt}/${ev.max_attempts || ''}
               </div>
-              ${promptPanelHtml(ev.prompt, take.model)}
-              <section class="turn-panel turn-panel-response" aria-label="${escapeHtml(modelLabel(take.model))} response" data-slot="response">
-                <div class="turn-panel-title">${escapeHtml(modelLabel(take.model))} response</div>
-                <div class="fs-xs c-dim">Waiting for ${escapeHtml(modelLabel(take.model))}…</div>
+              ${promptPanelHtml(ev.prompt, take.song?.model)}
+              <section class="turn-panel turn-panel-response" aria-label="${escapeHtml(modelLabel(take.song?.model))} response" data-slot="response">
+                <div class="turn-panel-title">${escapeHtml(modelLabel(take.song?.model))} response</div>
+                <div class="fs-xs c-dim">Waiting for ${escapeHtml(modelLabel(take.song?.model))}…</div>
               </section>
               <section class="turn-panel turn-panel-analysis" aria-label="Engine analysis" data-slot="analysis">
                 <div class="turn-panel-title">Engine analysis</div>
                 <div class="fs-xs c-dim">Pending response.</div>
               </section>
-              <section class="turn-panel turn-panel-critique d-none" aria-label="${escapeHtml(modelLabel(take.model))} Critique" data-slot="critique">
+              <section class="turn-panel turn-panel-critique d-none" aria-label="${escapeHtml(modelLabel(take.song?.model))} Critique" data-slot="critique">
               </section>
             `;
             chatWindow.appendChild(card);
@@ -285,7 +283,7 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
         } else if (ev.type === 'response') {
           const slot = turnSlot(ev.turn_id, ev.attempt, 'response', takeId);
           if (slot) {
-            slot.innerHTML = responsePanelInner(ev.response, ev.raw, ev.model || take.model,
+            slot.innerHTML = responsePanelInner(ev.response, ev.raw, ev.model || take.song?.model,
                                                 { cut_off: ev.cut_off, usage: ev.usage });
             chatWindow.scrollTop = chatWindow.scrollHeight;
           }
@@ -308,7 +306,7 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
             slot.classList.remove('d-none');
             slot.classList.toggle('pass', ev.critique.passed !== false);
             slot.classList.toggle('fail', ev.critique.passed === false);
-            slot.innerHTML = critiquePanelHtml(ev.critique, take.model);
+            slot.innerHTML = critiquePanelHtml(ev.critique, take.song?.model);
             chatWindow.scrollTop = chatWindow.scrollHeight;
           }
         } else if (ev.type === 'line_accepted') {
@@ -328,7 +326,7 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
             lyricsContent.scrollTop = lyricsContent.scrollHeight;
           }
         } else if (ev.type === 'complete') {
-          completeData = ev;
+          completeData = ev.song;
         }
       }
     }
@@ -336,8 +334,9 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
     if (!isCurrentTakeRun(take)) return;
     if (!completeData) throw new Error('The stream ended before the song was complete. Please re-draft this take.');
     renderTake(completeData, takeId);
-    if (completeData.status === 'incomplete') {
-      const names = (completeData.incomplete_sections || []).map(function (s) {
+    if ((take.song && take.song.status === 'incomplete') || completeData.status === 'incomplete') {
+      const incompleteList = (take.song && take.song.incomplete_sections) || completeData.incomplete_sections || [];
+      const names = incompleteList.map(function (s) {
         const detail = s.reason === 'did not pass validation'
           ? 'did not pass validation'
           : `${s.have}/${s.planned} lines`;
@@ -366,10 +365,10 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
 // the SAME card in place; it never spawns a second card and rejected text is never kept.
 // The full LLM prompt (with prior rejections + reasons) is hidden behind a Prompt button.
 // A 2-section song is always 2 cards, no matter how many rejects.
-async function runHumanReview(take, params) {
-  params.story = val('gw-storyline-text') || state.storyline || '';
-  params.max_sections = null;
-  const hr = { params, slots: [], take, busy: false };
+async function runHumanReview(take, song) {
+  const clone = typeof deepClone === 'function' ? deepClone : obj => JSON.parse(JSON.stringify(obj));
+  const hr = { song: clone(song), slots: [], take, busy: false };
+  if (!hr.song.turns) hr.song.turns = [];
   take.humanReview = hr;
   state.humanReview = hr;
   take.lyricsPane.innerHTML = '<div class="empty-state">Accepted lines assemble here as you approve each turn.</div>';
@@ -398,14 +397,15 @@ async function drawNextSlot(rejectReason, hr = state.humanReview) {
     }
   }
 
-  const body = Object.assign({}, hr.params, {
+  const body = {
+    song: hr.song,
     accepted: humanAcceptedTurns(hr),
     reject_reason: rejectReason || '',
-    rejections: rejHistory,
-  });
-  let data;
+    rejections: rejHistory
+  };
+  let returnedSong;
   try {
-    data = await postJSON('/api/ai/draft_turn', body, hr.take.abort.signal);
+    returnedSong = await postJSON('/api/ai/draft_turn', body, hr.take.abort.signal);
   } catch (e) {
     hr.busy = false;
     if (isCurrentTakeRun(hr.take)) takeStatus(hr.take, 'Turn error: ' + e.message + '. Try again or reset this take.', 'red');
@@ -413,14 +413,21 @@ async function drawNextSlot(rejectReason, hr = state.humanReview) {
   }
   hr.busy = false;
   if (!isCurrentTakeRun(hr.take)) return;
-  if (data.done) { await finalizeHumanReview(hr); return; }
-  hr.take.turnText = `Turn ${data.turn_index + 1} / ${data.total_turns}`;
+  if (returnedSong) {
+    hr.song = returnedSong;
+  }
+  const turns = (hr.song && hr.song.turns) || [];
+  const turn = (turns.length ? turns[turns.length - 1] : returnedSong) || {};
+  if (turn.done) { await finalizeHumanReview(hr); return; }
+  const turnIndex = turn.turn_index != null ? turn.turn_index : hr.slots.length;
+  const totalTurns = turn.total_turns || (turnIndex + 1);
+  hr.take.turnText = `Turn ${turnIndex + 1} / ${totalTurns}`;
   if (state.activeTakeId === hr.take.takeId) updateTakeControls(hr.take);
   // A recurring chorus is auto-accepted (its lines were fixed by the first chorus).
-  if (data.repeat_chorus) {
-    hr.slots.push({ section: data.section, lines: data.lines, accepted: true,
-                    lineNumbers: data.line_numbers, scheme: data.scheme, scan: [],
-                    prompt: '(Repeat of the first chorus.)', rejections: [], repeat: true });
+  if (turn.repeat_chorus) {
+    hr.slots.push({ section: turn.section, lines: (turn.lines || []).slice(), accepted: true,
+                    lineNumbers: turn.line_numbers, scheme: turn.scheme, scan: [],
+                    prompt: '(Repeat of the first chorus.)', rejections: [], repeat: true, turnRef: turn });
     renderSlotCard(hr.slots.length - 1, hr);
     await drawNextSlot(null, hr);
     return;
@@ -430,11 +437,14 @@ async function drawNextSlot(rejectReason, hr = state.humanReview) {
     idx = hr.slots.length - 1;
   }
   hr.slots[idx] = {
-    section: data.section, lines: data.lines, accepted: false,
-    // The model's reply stays fixed in its own panel; `lines` is the editable copy.
-    response: (data.lines || []).slice(), raw: data.raw || '',
-    lineNumbers: data.line_numbers, scheme: data.scheme, scan: data.scan || [],
-    prompt: data.prompt || '', rejections: rejHistory, repeat: false,
+    section: turn.section,
+    lines: (turn.lines || []).slice(),
+    accepted: false,
+    lineNumbers: turn.line_numbers,
+    scheme: turn.scheme,
+    rejections: rejHistory,
+    repeat: false,
+    turnRef: turn
   };
   renderSlotCard(idx, hr);
   const ta = el('human-slot-text-' + hr.take.takeId + '-' + idx);
@@ -451,7 +461,13 @@ function renderSlotCard(idx, hr = state.humanReview) {
     card.className = 'chat-review-card mb-10';
     chatWindow.appendChild(card);
   }
-  const missing = (slot.scan || []).some(function(s) { return s.missing; });
+  const turn = slot.turnRef || {};
+  const scan = slot.scan || turn.scan || [];
+  const prompt = slot.prompt || turn.prompt || '';
+  const raw = slot.raw || turn.raw || '';
+  const response = slot.response || turn.response || turn.lines || [];
+  const respText = Array.isArray(response) ? response.join('\n') : String(response);
+  const missing = (scan || []).some(function(s) { return s.missing; });
   const missingWarn = missing
     ? '<div class="fs-xs c-rose mt-4">Some lines are missing. Edit them in the box or click Try again.</div>' : '';
   const rejHtml = (slot.rejections || []).length
@@ -466,12 +482,12 @@ function renderSlotCard(idx, hr = state.humanReview) {
   card.classList.toggle('is-accepted', !!slot.accepted);
   // Repeat choruses have no model turn, so only the lyric form applies.
   const modelPanels = slot.repeat ? '' : `
-    ${promptPanelHtml(slot.prompt, hr.take.model)}
-    <section class="turn-panel turn-panel-response" aria-label="${escapeHtml(modelLabel(hr.take.model))} response">
-      ${responsePanelInner((slot.response || []).join('\n'), slot.raw, hr.take.model)}
+    ${promptPanelHtml(prompt, hr.take.song?.model)}
+    <section class="turn-panel turn-panel-response" aria-label="${escapeHtml(modelLabel(hr.take.song?.model))} response">
+      ${responsePanelInner(respText, raw, hr.take.song?.model)}
     </section>
     <section class="turn-panel turn-panel-analysis ${missing ? 'fail' : 'pass'}" aria-label="Engine analysis">
-      ${analysisPanelInner(!missing, slot.scan || [], [])}
+      ${analysisPanelInner(!missing, scan || [], [])}
     </section>`;
   card.innerHTML = `
     <div class="flex justify-between items-center mb-6">
@@ -568,7 +584,10 @@ async function finalizeHumanReview(hr = state.humanReview) {
   hr.busy = true;
   takeStatus(hr.take, 'Assembling your accepted lines…', 'yellow');
   try {
-    const body = Object.assign({}, hr.params, { accepted: humanAcceptedTurns(hr) });
+    const body = {
+      song: hr.song,
+      accepted: humanAcceptedTurns(hr)
+    };
     const data = await postJSON('/api/ai/finalize_turns', body, hr.take.abort.signal);
     if (!isCurrentTakeRun(hr.take)) return;
     hr.take.humanReview = null;
@@ -591,7 +610,8 @@ function discardAndStartOver() {
   state.takes = {};
   state.nextTakeId = 1;
   state.activeTakeId = null;
-  state.editingSongId = null;
+  state.song = typeof deepClone === 'function' ? deepClone(defaultSongTemplate) : JSON.parse(JSON.stringify(defaultSongTemplate));
+  syncDOMFromSong(state.song);
   const switcher = el('ws-take-switcher');
   if (switcher) switcher.innerHTML = '<button type="button" class="pill active" id="btn-take-1" onclick="selectTake(1)">Take 1</button>';
   const chatWindow = el('gw-chat-turns-window');
@@ -659,15 +679,28 @@ function beginTake(isNewTake, resetTakeId) {
     if (previous.chatPane) previous.chatPane.remove();
     if (previous.lyricsPane) previous.lyricsPane.remove();
   }
-  // Capture the model this take runs with, so its labels stay correct even if the
-  // dropdown selection changes before the next take.
-  const model = (state.selectedModel || (el('gw-model') && el('gw-model').value) || '').trim();
-  // A new take belongs to the same song: carry the group so saves link as Take N, not a
-  // new standalone song. The server assigns the number; we only pass the group id.
-  const take = { takeId, status: 'running', lyrics: '',
-    songId: isNewTake ? null : (previous && previous.songId),
-    takeGroup: state.takeGroup || (previous && previous.takeGroup) || null,
-    model: model, abort: new AbortController(), turnText: 'Turn 0' };
+  syncSongFromDOM(state.song);
+  const clone = typeof deepClone === 'function' ? deepClone : obj => JSON.parse(JSON.stringify(obj));
+  const takeSong = clone(state.song || {});
+  if (!isNewTake && previous && previous.song) {
+    takeSong.song_id = previous.song.song_id || '';
+    takeSong.revision = previous.song.revision || 0;
+  } else if (isNewTake) {
+    takeSong.song_id = '';
+    takeSong.revision = 0;
+    takeSong.take_number = 0;
+  }
+  takeSong.sections = [];
+  takeSong.turns = [];
+  delete takeSong.lyrics;
+
+  const take = {
+    takeId,
+    status: 'running',
+    song: takeSong,
+    abort: new AbortController(),
+    turnText: 'Turn 0'
+  };
   state.takes[takeId] = take;
   ensureTakePanes(take);
   updateTakeButton(take);
@@ -732,18 +765,24 @@ function selectTake(takeId) {
   if (!take) return;
   state.activeTakeId = takeId;
   state.humanReview = take.humanReview || null;
-  if (take.songId) state.editingSongId = take.songId;
+  if (take.song) {
+    const clone = typeof deepClone === 'function' ? deepClone : obj => JSON.parse(JSON.stringify(obj));
+    state.song = clone(take.song);
+    syncDOMFromSong(state.song);
+  }
   ensureTakePanes(take);
   for (const other of Object.values(state.takes)) {
     if (other.chatPane) other.chatPane.classList.toggle('hidden', other !== take);
     if (other.lyricsPane) other.lyricsPane.classList.toggle('hidden', other !== take);
     updateTakeButton(other);
   }
-  if (take.status === 'completed' && take.lyricsPane) take.lyricsPane.innerHTML = formatLyricsWithBadges(take.lyrics);
+  if (take.status === 'completed' && take.lyricsPane) {
+    take.lyricsPane.innerHTML = formatLyricsWithBadges(take.song?.lyrics || '');
+  }
   updateTakeControls(take);
-  if (el('pkg-songbench-box')) el('pkg-songbench-box').value = take.formatted_songbench || '';
-  if (el('pkg-yue2-box')) el('pkg-yue2-box').value = take.formatted_yue2 || '';
-  if (el('pkg-minimax-box')) el('pkg-minimax-box').value = take.formatted_minimax || '';
+  if (el('pkg-songbench-box')) el('pkg-songbench-box').value = getEnginePromptDisplay(take.song, 'songbench');
+  if (el('pkg-yue2-box')) el('pkg-yue2-box').value = getEnginePromptDisplay(take.song, 'yue2');
+  if (el('pkg-minimax-box')) el('pkg-minimax-box').value = getEnginePromptDisplay(take.song, 'minimax');
   if (el('lyrics-meta-pills')) el('lyrics-meta-pills').innerHTML = take.specPillsHtml || '';
   if (el('craft-pills')) el('craft-pills').innerHTML = take.scansionPillsHtml || '';
   if (el('craft-trail-container')) el('craft-trail-container').innerHTML = take.trailHtml || '<div class="empty-state">No section trail available.</div>';
@@ -751,43 +790,52 @@ function selectTake(takeId) {
 function renderTake(data, takeId) {
   const take = state.takes[takeId];
   if (!take) return;
-  const engine = data.engine_prompt || {};
+  const clone = typeof deepClone === 'function' ? deepClone : obj => JSON.parse(JSON.stringify(obj));
+  const song = Object.assign({}, clone(take.song || {}), clone(data || {}));
+  take.song = song;
 
-  const meta = data.metadata || {};
-  const check = data.craft_check || {};
   const specPills = [
-    '<span class="m-pill">BPM<b>' + escapeHtml(meta.bpm || val('gw-bpm')) + '</b></span>',
-    '<span class="m-pill">Key<b>' + escapeHtml((meta.key || val('gw-key')) + ' ' + (meta.scale || val('gw-scale'))) + '</b></span>',
-    '<span class="m-pill">Genre<b>' + escapeHtml(meta.genre || val('gw-style-input')) + '</b></span>',
-    '<span class="m-pill">Vocal<b>' + escapeHtml(meta.vocal || val('gw-vocal') || 'Lead') + '</b></span>'
+    '<span class="m-pill">BPM<b>' + escapeHtml(song.bpm || val('gw-bpm')) + '</b></span>',
+    '<span class="m-pill">Key<b>' + escapeHtml((song.key || val('gw-key')) + ' ' + (song.scale || val('gw-scale'))) + '</b></span>',
+    '<span class="m-pill">Genre<b>' + escapeHtml(song.genre || val('gw-style-input')) + '</b></span>',
+    '<span class="m-pill">Vocal<b>' + escapeHtml(song.vocal || val('gw-vocal') || 'Lead') + '</b></span>'
   ].join('');
 
-  const scansionPills = [
-    '<span class="m-pill">Scheme<b>' + escapeHtml(check.rhyme_scheme || '-') + '</b></span>',
-    '<span class="m-pill">Meter Consistency<b>' + Number(check.metric_consistency != null ? check.metric_consistency : 0.88).toFixed(2) + '</b></span>',
-    '<span class="m-pill">Rhyme Density<b>' + Math.round((check.rhyme_density != null ? check.rhyme_density : 0.5) * 100) + '%</b></span>',
-    '<span class="m-pill">Total Lines<b>' + (data.lyrics ? data.lyrics.split('\n').filter(l => l.trim() && !l.trim().startsWith('[')).length : 18) + '</b></span>'
-  ].join('');
+  const analytics = song.analytics || {};
+  const scansionPillsList = [
+    '<span class="m-pill">Scheme<b>' + escapeHtml(song.rhyme_scheme || '-') + '</b></span>'
+  ];
+  if (analytics.metric_consistency != null) {
+    scansionPillsList.push('<span class="m-pill">Meter Consistency<b>' + Number(analytics.metric_consistency).toFixed(2) + '</b></span>');
+  }
+  if (analytics.rhyme_density != null) {
+    scansionPillsList.push('<span class="m-pill">Rhyme Density<b>' + Math.round(Number(analytics.rhyme_density) * 100) + '%</b></span>');
+  }
+  const lineCount = (song.lyrics ? song.lyrics.split('\n').filter(l => l.trim() && !l.trim().startsWith('[')).length : 0);
+  if (lineCount > 0) {
+    scansionPillsList.push('<span class="m-pill">Total Lines<b>' + lineCount + '</b></span>');
+  }
+  const scansionPills = scansionPillsList.join('');
 
-  const draft = data.draft;
   let trailHtml = '';
-  if (draft && Array.isArray(draft.sections)) {
+  const sections = (Array.isArray(song.sections) && song.sections.length) ? song.sections : ((data.draft && Array.isArray(data.draft.sections)) ? data.draft.sections : []);
+  if (sections.length) {
     trailHtml = '<div class="flex flex-col gap-12">';
-
-    if (data.story_treatment) {
+    if (song.story || data.story_treatment) {
       trailHtml += '<div class="subpanel">' +
         '<div class="eyebrow c-indigo mb-4">Narrative Story Treatment</div>' +
-        '<div class="fs-sm lh-14 c-main">' + escapeHtml(data.story_treatment) + '</div>' +
-      '</div>';
+        '<div class="fs-sm lh-14 c-main">' + escapeHtml(song.story || data.story_treatment) + '</div>' +
+        '</div>';
     }
-
-    draft.sections.forEach(function(s, idx) {
+    sections.forEach(function(s, idx) {
+      const secName = s.name || `Section ${idx + 1}`;
+      const secLines = s.lines || [];
+      const sylRange = (s.syllable_min && s.syllable_max) ? `${s.syllable_min}-${s.syllable_max}` : (song.syllable_min ? `${song.syllable_min}-${song.syllable_max}` : '8-10');
       trailHtml += '<div class="subpanel">' +
         '<div class="flex justify-between items-center mb-6">' +
-          '<span class="fw-700 c-cyan fs-md">[' + escapeHtml(s.name) + ']</span>' +
-          '<span class="fs-xs c-muted">' + escapeHtml(s.performer || 'Lead') + ' • Target: ' + escapeHtml(s.target_syllables || '8-10') + ' syl • ' + (s.attempts > 1 ? '<span class="c-amber">Repaired (' + s.attempts + ' passes)</span>' : '<span class="c-emerald">Clean (1 pass)</span>') + '</span>' +
+          '<span class="fw-700 c-cyan fs-md">[' + escapeHtml(secName) + ']</span>' +
+          '<span class="fs-xs c-muted">' + escapeHtml(s.performer || song.vocal || 'Lead') + ' • Target: ' + escapeHtml(sylRange) + ' syl</span>' +
         '</div>';
-      // Render complete LLM critique & feedback trail for each attempt
       if (Array.isArray(s.attempt_history) && s.attempt_history.length) {
         trailHtml += '<div class="my-8 flex flex-col gap-8">';
         s.attempt_history.forEach(function(att) {
@@ -801,16 +849,14 @@ function renderTake(data, takeId) {
               (att.lines || []).map(function(l, i) { return '<div>' + (i+1) + '. ' + escapeHtml(l) + '</div>'; }).join('') +
             '</div>';
           if (att.issues && att.issues.length) {
-            trailHtml += '<div class="critique-box">' +
-              '<b>Critique & Rejection Reason:</b> ' + att.issues.map(escapeHtml).join('; ') +
-            '</div>';
+            trailHtml += '<div class="critique-box"><b>Critique & Rejection Reason:</b> ' + att.issues.map(escapeHtml).join('; ') + '</div>';
           }
           trailHtml += '</div>';
         });
         trailHtml += '</div>';
-      } else if (Array.isArray(s.lines) && s.lines.length) {
+      } else if (secLines.length) {
         trailHtml += '<div class="flex flex-col gap-4 mono fs-sm my-8">' +
-          s.lines.map(function(l, lIdx) {
+          secLines.map(function(l, lIdx) {
             return '<div class="flex gap-8 items-baseline">' +
               '<span class="fs-2xs c-muted w-18">' + (lIdx + 1) + '.</span>' +
               '<span class="flex-1 c-bright">' + escapeHtml(l) + '</span>' +
@@ -818,46 +864,20 @@ function renderTake(data, takeId) {
           }).join('') +
         '</div>';
       }
-
       if (s.resolved && s.resolved.length) {
-        trailHtml += '<div class="fs-xs c-emerald mt-4">' +
-          '✓ Repaired in subsequent pass: ' + s.resolved.map(escapeHtml).join('; ') +
-        '</div>';
+        trailHtml += '<div class="fs-xs c-emerald mt-4">✓ Repaired in subsequent pass: ' + s.resolved.map(escapeHtml).join('; ') + '</div>';
       }
       trailHtml += '</div>';
     });
-
-    if (draft.final_issues && draft.final_issues.length) {
-      trailHtml += '<div class="mt-6"><div class="fs-xs fw-700 c-rose mb-4">Remaining Issues:</div>' +
-        draft.final_issues.map(function(i) {
-          return '<div class="issue">' + escapeHtml(i) + '</div>';
-        }).join('') + '</div>';
-    } else {
-      trailHtml += '<div class="mt-8 c-emerald fs-sm fw-600">✓ All sections verified against deterministic scansion rules.</div>';
-    }
     trailHtml += '</div>';
   }
 
-  Object.assign(take, {
-    status: 'completed',
-    takeId: takeId,
-    lyrics: data.lyrics,
-    formatted_songbench: data.formatted_songbench || ((engine.songbench || '') + '\n\n' + data.lyrics),
-    formatted_yue2: data.formatted_yue2 || (engine.yue2 + '\n\n' + data.lyrics),
-    formatted_minimax: data.formatted_minimax || (engine.minimax + '\n\n' + data.lyrics),
-    specPillsHtml: specPills,
-    scansionPillsHtml: scansionPills,
-    trailHtml: trailHtml,
-    model_used: data.model_used || (data.generation && data.generation.model) || '',
-    model: take.model || data.model_used || (data.generation && data.generation.model) || '',
-    songId: data.song_id || null,
-    songStatus: data.status || 'finalized',
-    incompleteSections: data.incomplete_sections || [],
-    generation: data.generation || null
-  });
-  // A finished draft is already saved; re-drafting must add revisions to the
-  // same song, not start a new one.
-  if (data.song_id && state.activeTakeId === takeId) state.editingSongId = data.song_id;
+  take.status = 'completed';
+  take.takeId = takeId;
+  take.specPillsHtml = specPills;
+  take.scansionPillsHtml = scansionPills;
+  take.trailHtml = trailHtml;
+
   updateTakeButton(take);
   if (state.activeTakeId === takeId) selectTake(takeId);
 }
@@ -868,34 +888,23 @@ function toggleAudioDrawer() {
 }
 async function saveCurrentTake() {
   const currentTake = state.takes[state.activeTakeId || 1];
-  if (!currentTake || !currentTake.generation) {
+  if (!currentTake || !currentTake.song) {
     setStatus('gw-status', 'Please generate lyrics first before saving to library.', 'yellow');
     return;
   }
-  // The generation is the single source of truth: save it whole, with the title edit
-  // applied, and carry the take group so the server links this as Take N of the song.
-  const generation = Object.assign({}, currentTake.generation, {
-    title: val('gw-title') || currentTake.generation.title || 'Untitled Song',
-    take_group: currentTake.takeGroup || state.takeGroup || ''
-  });
+  const clone = typeof deepClone === 'function' ? deepClone : obj => JSON.parse(JSON.stringify(obj));
+  const songToSave = clone(currentTake.song);
+  songToSave.title = val('gw-title') || songToSave.title || 'Untitled Song';
+  const prevRevision = songToSave.revision || 0;
   try {
-    const res = await postJSON('/api/crafted_songs', {
-      id: currentTake.songId,
-      status: currentTake.songStatus || 'finalized',
-      generation: generation
-    });
-    currentTake.songId = res.song_id;
-    // Capture the server-assigned group/number so sibling takes link to the same song.
-    currentTake.takeGroup = res.take_group || currentTake.takeGroup || res.song_id;
-    state.takeGroup = currentTake.takeGroup;
-    generation.take_group = currentTake.takeGroup;
-    if (typeof res.take_number === 'number') currentTake.takeNumber = res.take_number;
-    currentTake.generation = generation;
-    state.editingSongId = res.song_id;
-    if (res.status === 'unchanged') {
-      setStatus('gw-status', 'No changes since "' + generation.title + '" Take ' + (currentTake.takeNumber || 1) + '. Edit or re-draft to save a new version.', 'yellow');
+    const savedSong = await postJSON('/api/crafted_songs', songToSave);
+    currentTake.song = clone(savedSong);
+    state.song = clone(savedSong);
+    const takeNum = savedSong.take_number || 1;
+    if (savedSong.revision === prevRevision && prevRevision > 0) {
+      setStatus('gw-status', 'No changes since "' + savedSong.title + '" Take ' + takeNum + '. Edit or re-draft to save a new version.', 'yellow');
     } else {
-      setStatus('gw-status', 'Saved "' + generation.title + '" (Take ' + (currentTake.takeNumber || 1) + ') to library!', 'green');
+      setStatus('gw-status', 'Saved "' + savedSong.title + '" (Take ' + takeNum + ') to library!', 'green');
     }
   } catch (e) {
     setStatus('gw-status', 'Save error: ' + e.message, 'red');
@@ -904,10 +913,10 @@ async function saveCurrentTake() {
 function copyCurrentLyrics(btn) {
   const take = state.takes[state.activeTakeId];
   if (!take) return;
-  copyText(take.lyrics, btn);
+  copyText(take.song?.lyrics || '', btn);
 }
 function loadTakeIntoStudio() {
   const take = state.takes[state.activeTakeId || 1];
   if (!take) return;
-  openInSongAnalytics(take.lyrics, (val('gw-title') || 'Untitled Song') + ' (Take ' + take.takeId + ')');
+  openInSongAnalytics(take.song?.lyrics || '', (val('gw-title') || 'Untitled Song') + ' (Take ' + take.takeId + ')');
 }

@@ -54,7 +54,7 @@ Songwriter uses a layered architecture separating pure core algorithms from data
 * **Cliché Detection:** Identifies overused phrasing windows and predictable rhyme pairs backed by real-world corpus statistics.
 * **Sensory & Emotional Mapping:** Visual breakdown of showing-vs-telling abstractions and emotional trajectories across verses, choruses, and bridges.
 * **AI Cowriter Engine:** Interactive turn-by-turn lyric generator with section contour planning, interview setup wizards, and reference song blueprints. References lend structure without replacing your genre. When genres differ, Producer Questions offers your original genre (default), the reference genre, and an AI-recommended alternative. Indie and other niche genres work even without a matching reference; available niche corpus matches are ranked ahead of broad catalog fallbacks.
-* **MusicStudio Integration (`/v1` API):** Production REST contract for DAW integration, supporting song revisions, metadata synchronization, and direct binary audio take uploads.
+* **MusicStudio Integration (`/v1` API):** Contract 6 exposes the complete canonical song document, exact saved engine prompts, song revisions, and direct binary audio take uploads.
 * **Stdio MCP Server:** Plug-and-play Model Context Protocol tool provider compatible with Claude Desktop, Cursor, and any MCP client.
 * [**API for MusicStudio:** ](https://github.com/rayone/MusicStudio)
 
@@ -133,6 +133,42 @@ line. Resolved production choices take precedence over reference/template hints.
 Edit this prompt under **Settings → LLM Prompts → Engine Prompts (YuE2 & MiniMax)**.
 Your saved prompt edits are preserved. Existing saved song/take prompts are not
 rewritten; generate a new take to use the improved authoring.
+
+### Canonical song document and API — contract 6
+
+[`SongGeneration`](src/songwriter/ai/generation.py) is the single song schema for
+authoring, generation, persistence, revisions, and API responses. The browser
+loads its defaults from `GET /api/ai/song_defaults`; it does not maintain a
+second song schema or separate model, song-ID, and take-group variables.
+Operation-specific controls can wrap a `song` document without redeclaring its
+parameters.
+
+The document includes production metadata (`language`, `genre`, `subgenre`,
+`moods`, `instruments`, `bpm`, `key`, `scale`, `time_signature`, `vocal`, and
+`duration_hint_sec`), brief/story, reference/template choices, producer questions
+and answers, sections, drafting attempts and validation, analytics, ABC score,
+generation prompts, and engine prompts with authoring provenance.
+
+* `POST /api/crafted_songs` accepts and returns the complete document.
+* `GET /v1/songs/{song_id}` returns it directly; `?revision=N` returns the saved
+  revision. `GET /v1/songs` contains complete documents in `songs`, alongside
+  `next_cursor`.
+* `engine_prompts.yue2`, `.minimax`, and `.songbench` contain the saved prompt
+  strings. Reading, listing, formatting, or reopening a song never reauthors
+  them. New generation authors prompts once from the canonical song.
+* `sections` owns lyric content. `lyrics`, `instrumental`, and `has_abc` are
+  read-only derived output fields, not independently stored song variables.
+* New revision snapshots capture status. Historical snapshots that never
+  recorded status return `null`, rather than borrowing the current status.
+  Missing legacy language/duration remains `null`; previously discarded data
+  cannot be recovered by this change.
+
+**Breaking MusicStudio change:** update clients to contract 6. The `creative`
+and `model_inputs` wrappers are removed. Use the canonical root fields:
+`song_id` instead of `id`, `brief` instead of `summary`, `vocal` instead of
+`vocal_style`, and `engine_prompts` for saved engine styles/captions. `key` is the
+tonic (for example `Bb`); `scale` remains separate (`major`). The generated
+OpenAPI schema documents the complete input/output fields.
 
 ### Adding or updating reference songs
 

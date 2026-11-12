@@ -44,21 +44,28 @@ function harness(mode = '') {
   const turns = [];
   const context = vm.createContext({
     document, window: {}, AbortController, TextDecoder, console,
-    currentParams: () => ({ prompt: 'test brief', answers: { validation_mode: mode } }),
+    structuredClone: typeof structuredClone !== 'undefined' ? structuredClone : undefined,
     confirm: () => true, goToStep() {},
     fetch: async (url, options) => {
       const stream = new ReadableStream({ start(controller) { requests.push({ controller, options }); } });
       return { ok: true, body: stream };
     }
   });
-  for (const name of ['core.js', 'cowriter/takes.js']) {
+  for (const name of ['core.js', 'cowriter/interview.js', 'cowriter/templates.js', 'cowriter/takes.js']) {
     vm.runInContext(readFileSync(new URL('../src/songwriter/web/static/js/' + name, import.meta.url), 'utf8'), context);
   }
   context.postJSON = (url, body) => new Promise(resolve => turns.push({ url, body, resolve }));
   context.state.currentStep = 4;
-  context.state.selectedModel = 'glm-4.6';
+  context.state.song.model = 'glm-4.6';
+  context.currentParams = () => Object.assign(context.state.song, {
+    brief: 'test brief', answers: { validation_mode: mode }
+  });
   const emit = (i, event) => requests[i].controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify(event) + '\n\n'));
-  const finish = (i, lyrics) => { emit(i, { type: 'complete', lyrics }); requests[i].controller.close(); };
+  const finish = (i, lyrics) => {
+    const song = JSON.parse(requests[i].options.body);
+    emit(i, { type: 'complete', song: { ...song, lyrics, status: 'finalized' } });
+    requests[i].controller.close();
+  };
   return { c: context, requests, turns, nodes, emit, finish };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -76,7 +83,7 @@ test('first take reserves its ID immediately; completed take creates a visible n
   assert.equal(c.state.activeTakeId, 2);
   assert.equal(c.state.takes[2].status, 'running');
   assert.ok(nodes.get('btn-take-2'));
-  assert.equal(c.state.takes[1].lyrics, 'first song');
+  assert.equal(c.state.takes[1].song.lyrics, 'first song');
   finish(1, 'second song');
   await second;
   assert.equal(c.state.nextTakeId, 3);
@@ -111,7 +118,7 @@ test('new take while running asks; cancel leaves it untouched; parallel streams 
   finish(1, 'second finished in background');
   await second;
   assert.equal(c.state.activeTakeId, 1);
-  assert.equal(c.state.takes[2].lyrics, 'second finished in background');
+  assert.equal(c.state.takes[2].song.lyrics, 'second finished in background');
 });
 
 test('reset reuses the tab, aborts only that run and ignores its late completion', async () => {
@@ -127,7 +134,7 @@ test('reset reuses the tab, aborts only that run and ignores its late completion
   assert.equal(c.state.takes[1].status, 'running');
   finish(1, 'replacement song');
   await resetRun;
-  assert.equal(c.state.takes[1].lyrics, 'replacement song');
+  assert.equal(c.state.takes[1].song.lyrics, 'replacement song');
 });
 
 test('failed streams stop showing running and can create a new take', async () => {
@@ -154,7 +161,7 @@ test('discard invalidates all pending runs, even when IDs are reused', async () 
   await Promise.all([first, second]);
   assert.equal(c.state.takes[1].status, 'running');
   finish(2, 'fresh'); await fresh;
-  assert.equal(c.state.takes[1].lyrics, 'fresh');
+  assert.equal(c.state.takes[1].song.lyrics, 'fresh');
 });
 
 test('human review responses remain attached to their originating take after switching', async () => {
@@ -162,7 +169,7 @@ test('human review responses remain attached to their originating take after swi
   const first = c.runGenerateTake(false);
   c.onNewTakeClicked();
   const second = c.onTakeModalParallel();
-  const result = section => ({ section, lines: ['test line'], turn_index: 0, total_turns: 2 });
+  const result = section => ({ turns: [{ section, lines: ['test line'], turn_index: 0, total_turns: 2 }], section, lines: ['test line'], turn_index: 0, total_turns: 2 });
   turns[0].resolve(result('Verse')); await first;
   assert.equal(c.state.activeTakeId, 2);
   assert.equal(c.state.takes[1].humanReview.slots[0].section, 'Verse');
@@ -176,7 +183,7 @@ test('human review responses remain attached to their originating take after swi
   turns[2].resolve({ lyrics: 'approved first take' });
   await finalizing;
   assert.equal(c.state.activeTakeId, 2);
-  assert.equal(c.state.takes[1].lyrics, 'approved first take');
+  assert.equal(c.state.takes[1].song.lyrics, 'approved first take');
   assert.equal(c.state.takes[1].status, 'completed');
 });
 
@@ -194,7 +201,7 @@ test('resetting human review ignores stale turn responses and preserves the para
   turns[0].resolve({ section: 'Stale', lines: ['discarded'] });
   await oldRun;
   assert.equal(c.state.takes[1].humanReview.slots.length, 0);
-  const result = section => ({ section, lines: ['new line'], turn_index: 0, total_turns: 2 });
+  const result = section => ({ turns: [{ section, lines: ['new line'], turn_index: 0, total_turns: 2 }], section, lines: ['new line'], turn_index: 0, total_turns: 2 });
   turns[1].resolve(result('Parallel'));
   turns[2].resolve(result('Replacement'));
   await Promise.all([parallel, reset]);
@@ -217,16 +224,10 @@ test('turn panels name the model that ran the take, not a generic LLM label', as
 test('a take keeps its own model label after the dropdown selection changes', () => {
   const { c } = harness();
   c.runGenerateTake(false);
-  c.state.selectedModel = 'some-other-model';
-  assert.equal(c.state.takes[1].model, 'glm-4.6');
+  c.state.song.model = 'some-other-model';
+  assert.equal(c.state.takes[1].song.model, 'glm-4.6');
 });
 
-test('model label falls back cleanly when no model is known', () => {
-  const { c } = harness();
-  c.state.selectedModel = '';
-  assert.equal(c.modelLabel(''), 'the model');
-  assert.equal(c.modelLabel('claude-x'), 'claude-x');
-});
 
 test('critique panel never shows an unreadable critic reply as a pass, and shows line fixes', () => {
   const { c } = harness();
@@ -242,4 +243,88 @@ test('critique panel never shows an unreadable critic reply as a pass, and shows
   assert.match(failed, /Sense \[1\/5\]/);
   assert.match(failed, /forced: 'up'/);
   assert.match(failed, /fix: <span class="c-bright">Break me apart<\/span>/);
+});
+
+
+test('completed or selected take supplies full canonical working draft without mutating earlier take snapshot', async () => {
+  const { c, finish } = harness();
+  const first = c.runGenerateTake(false);
+  finish(0, 'original lyrics');
+  await first;
+  const take1Snapshot = c.deepClone(c.state.takes[1].song);
+  // Modify draft state in Steps 1-3
+  c.state.song.brief = 'mutated brief';
+  c.state.song.genre = 'Drum and Bass';
+  c.state.song.model = 'new-model-xyz';
+  // Take 1 snapshot must remain untouched
+  assert.equal(c.state.takes[1].song.model, 'glm-4.6');
+  assert.equal(c.state.takes[1].song.lyrics, 'original lyrics');
+  assert.notEqual(c.state.takes[1].song.genre, 'Drum and Bass');
+});
+
+test('syncSongFromDOM clears empty brief, style, story, template, and bans', () => {
+  const { c, nodes } = harness();
+  // Set initial non-empty values
+  const song = {
+    brief: 'initial brief',
+    style: 'initial style',
+    story: 'initial story',
+    template_id: 42,
+    banned_pairs: ['love', 'dove']
+  };
+  // Simulate DOM nodes with empty strings
+  nodes.get('take-modal-body').id = 'gw-prompt';
+  nodes.set('gw-prompt', { value: '   ' });
+  nodes.set('gw-style-input', { value: '' });
+  nodes.set('gw-storyline-text', { value: '' });
+  nodes.set('gw-selected-template-id', { value: '' });
+  nodes.set('gw-banned', { value: '' });
+
+  c.syncSongFromDOM(song);
+  assert.equal(song.brief, '');
+  assert.equal(song.style, '');
+  assert.equal(song.story, '');
+  assert.equal(song.template_id, null);
+  assert.deepEqual(Array.from(song.banned_pairs), []);
+});
+
+test('editing a restored song title preserves free-form style and its separate genre', () => {
+  const { c, nodes } = harness();
+  const song = c.state.song;
+  Object.assign(song, {
+    title: 'Original', style: 'Dark Pop with Trap influences',
+    genre: 'Electropop', subgenre: 'Dark Pop', template_id: null
+  });
+  nodes.set('gw-title', { value: '' });
+  nodes.set('gw-style-input', { value: '' });
+  c.syncDOMFromSong(song);
+  nodes.get('gw-title').value = 'Revised';
+  c.syncSongFromDOM(song);
+  assert.equal(song.title, 'Revised');
+  assert.equal(song.style, 'Dark Pop with Trap influences');
+  assert.equal(song.genre, 'Electropop');
+  assert.equal(song.subgenre, 'Dark Pop');
+});
+
+test('a new take keeps its canonical group but not the saved song identity or ordinal', () => {
+  const { c } = harness();
+  Object.assign(c.state.song, {
+    song_id: 'saved-song', revision: 3, take_group: 'saved-group', take_number: 5
+  });
+  const take = c.beginTake(true);
+  assert.equal(take.song.take_group, 'saved-group');
+  assert.equal(take.song.song_id, '');
+  assert.equal(take.song.revision, 0);
+  assert.equal(take.song.take_number, 0);
+});
+
+test('returning to lyrics retains the working model choice without rewriting the saved take', () => {
+  const { c } = harness();
+  const take = c.beginTake(false);
+  vm.runInContext(readFileSync(new URL('../src/songwriter/web/static/js/cowriter/wizard.js', import.meta.url), 'utf8'), c);
+  c.goToStep(1);
+  c.onModelSelected('new-model');
+  c.goToStep(4);
+  assert.equal(c.state.song.model, 'new-model');
+  assert.equal(take.song.model, 'glm-4.6');
 });

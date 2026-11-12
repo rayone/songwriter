@@ -46,27 +46,10 @@ async function loadReferenceRecommendations() {
   if (!grid) return;
   grid.innerHTML = '<div class="empty-state">Finding reference matches...</div>';
   try {
-    const bpmVal = parseInt(val('gw-bpm'), 10) || (state.defaults && state.defaults.bpm) || null;
-    const keyVal = val('gw-key') || (state.defaults && state.defaults.music_key) || null;
-    const scaleVal = val('gw-scale') || (state.defaults && state.defaults.scale) || null;
-    const tmplIdVal = parseInt(val('gw-selected-template-id'), 10) || null;
-    const briefVal = val('gw-prompt') || '';
-    const storyVal = val('gw-storyline-text') || state.storyline || '';
-    const styleVal = val('gw-style-input') || '';
-
-    const hasMidi = el('gw-ref-has-midi') && el('gw-ref-has-midi').checked;
-    const recs = await postJSON('/api/ai/recommend_references', {
-      brief: briefVal,
-      story: storyVal,
-      style: styleVal,
-      genre: requestedGenre(),
-      bpm: bpmVal,
-      key: keyVal,
-      scale: scaleVal,
-      template_id: tmplIdVal,
-      limit: 4,
-      has_midi: hasMidi
-    });
+    syncSongFromDOM(state.song);
+    const hasMidi = !!(el('gw-ref-has-midi') && el('gw-ref-has-midi').checked);
+    const url = `/api/ai/recommend_references?limit=4&has_midi=${hasMidi}`;
+    const recs = await postJSON(url, state.song);
     state.recommendations = recs || [];
     renderRecommendations(state.recommendations);
   } catch (err) {
@@ -163,7 +146,8 @@ async function selectReferenceSong(songId, title, artist) {
     const bp = await getJSON(url);
     state.activeBlueprint = bp;
     const prevKey = questionsContextKey();
-    state.referenceSong = bp.reference_song;
+    if (!state.song) state.song = {};
+    state.song.reference_song = bp.reference_song;
     if (prevKey !== questionsContextKey()) invalidateQuestions();
     renderSelectedReference(bp);
     applyBlueprintSpecs(bp);
@@ -183,7 +167,7 @@ function switchInspectorTab(tab) {
   }
 }
 function clearSelectedReference() {
-  state.referenceSong = null;
+  if (state.song) state.song.reference_song = null;
   state.activeBlueprint = null;
   invalidateQuestions();
   const inspector = el('gw-reference-inspector');
@@ -197,7 +181,7 @@ function clearSelectedReference() {
   updateStepperUI();
 }
 function skipReferenceSong() {
-  state.referenceSong = null;
+  if (state.song) state.song.reference_song = null;
   state.activeBlueprint = null;
   state.bypassedReference = true;
   invalidateQuestions();
@@ -451,21 +435,21 @@ async function saveReferenceImport(songs) {
       throw new Error(detail || 'HTTP ' + response.status);
     }
     result = data;
-    const activeId = state.referenceSong?.id;
+    const activeId = state.song?.reference_song?.id;
     if (activeId < 0 && result.song_ids.includes(activeId)) {
       state.referenceRevision++;
       invalidateQuestions();
       try {
         const bp = await getJSON('/api/ai/blueprint?song_id=' + encodeURIComponent(activeId));
-        if (state.referenceSong?.id === activeId) {
+        if (state.song?.reference_song?.id === activeId) {
           state.activeBlueprint = bp;
-          state.referenceSong = bp.reference_song;
+          state.song.reference_song = bp.reference_song;
           renderSelectedReference(bp);
           applyBlueprintSpecs(bp);
           updateStepperUI();
         }
       } catch (err) {
-        if (state.referenceSong?.id === activeId) clearSelectedReference();
+        if (state.song?.reference_song?.id === activeId) clearSelectedReference();
         throw new Error('Saved, but the active blueprint could not refresh: ' + err.message + '. Select it again.');
       }
     }
@@ -580,21 +564,21 @@ async function renderArtistImportStatus(job) {
   artistImportHandledId = job.id;
   button.disabled = true;
   try {
-    const activeId = state.referenceSong?.id;
+    const activeId = state.song?.reference_song?.id;
     if (activeId < 0 && job.song_ids.includes(activeId)) {
       state.referenceRevision++;
       invalidateQuestions();
       try {
         const bp = await getJSON('/api/ai/blueprint?song_id=' + encodeURIComponent(activeId));
-        if (state.referenceSong?.id === activeId) {
+        if (state.song?.reference_song?.id === activeId) {
           state.activeBlueprint = bp;
-          state.referenceSong = bp.reference_song;
+          state.song.reference_song = bp.reference_song;
           renderSelectedReference(bp);
           applyBlueprintSpecs(bp);
           updateStepperUI();
         }
       } catch (err) {
-        if (state.referenceSong?.id === activeId) clearSelectedReference();
+        if (state.song?.reference_song?.id === activeId) clearSelectedReference();
         throw err;
       }
     }

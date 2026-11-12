@@ -15,11 +15,20 @@ from songwriter.ai.cowriter import SongwriterCowriter
 from songwriter.ai.generation import SongGeneration
 
 # One 2-line AABB verse, so each test drives a single turn.
-_LOVE = dict(
-    prompt="love", story="Giving everything to a love that keeps hurting me.", model="test-model",
-    section_plan="[Verse 1]", syllable_target="3-6", rhyme_scheme="AABB", max_sections=1,
-    answers={"section_lines": "2 lines per section"},
-)
+def _make_love_song(max_retries: int = 5) -> SongGeneration:
+    return SongGeneration(
+        brief="love",
+        story="Giving everything to a love that keeps hurting me.",
+        model="test-model",
+        section_plan=["Verse 1"],
+        syllable_min=3,
+        syllable_max=6,
+        rhyme_scheme="AABB",
+        max_sections=1,
+        max_retries=max_retries,
+        author_engine_prompt=False,
+        answers={"section_lines": "2 lines per section"},
+    )
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +57,7 @@ def test_nonsense_line_fails_the_turn_and_its_fix_drives_the_retry(
     ])
     monkeypatch.setattr(cowriter, "_chat",
                         lambda messages, **kw: next(critiques) if _is_critic(messages) else next(drafts))
-    events = list(cowriter.stream_song_interactive(max_retries=3, **_LOVE))
+    events = list(cowriter.stream_song_interactive(_make_love_song(3)))
 
     first = next(e["validation"] for e in events if e.get("type") == "validation")
     assert first["passed"] is False
@@ -69,7 +78,7 @@ def test_final_retry_never_replaces_a_stronger_earlier_take(
                            "story": {"score": 3, "verdict": "fail", "feedback": "no new beat"}})
     monkeypatch.setattr(cowriter, "_chat",
                         lambda messages, **kw: critique if _is_critic(messages) else next(drafts))
-    events = list(cowriter.stream_song_interactive(max_retries=2, **_LOVE))
+    events = list(cowriter.stream_song_interactive(_make_love_song(2)))
 
     assert [e["validation"]["kept_attempt"] for e in events if e.get("type") == "validation"] == [None, 1]
     assert [e["line"] for e in events if e.get("type") == "line_accepted"] == ["Take my heart", "Break me apart"]
@@ -117,7 +126,7 @@ def test_prompts_edited_in_settings_reach_the_writer_and_the_critic(
     prompt_templates.save_version("line_rules", rules)
     prompt_templates.save_version("lyric_critic", critic)
     try:
-        list(cowriter.stream_song_interactive(max_retries=1, **_LOVE))
+        list(cowriter.stream_song_interactive(_make_love_song(1)))
     finally:
         prompt_templates.reset_default("line_rules")
         prompt_templates.reset_default("lyric_critic")
@@ -200,7 +209,7 @@ def test_auto_llm_engine_fails_a_contracted_rhyme_that_does_not_land(
     monkeypatch.setattr(cowriter, "_chat",
                         lambda messages, **kw: '{"passed": true, "summary": "ok", "lines": []}'
                         if _is_critic(messages) else next(drafts))
-    events = list(cowriter.stream_song_interactive(max_retries=2, **_LOVE))
+    events = list(cowriter.stream_song_interactive(_make_love_song(2)))
 
     first = next(e["validation"] for e in events if e.get("type") == "validation")
     assert first["passed"] is False
@@ -222,7 +231,7 @@ def test_syllable_miss_beyond_tolerance_fails_smaller_miss_is_advisory(
     monkeypatch.setattr(cowriter, "_chat",
                         lambda messages, **kw: '{"passed": true, "summary": "ok", "lines": []}'
                         if _is_critic(messages) else next(drafts))
-    events = list(cowriter.stream_song_interactive(max_retries=2, **_LOVE))
+    events = list(cowriter.stream_song_interactive(_make_love_song(2)))
     first = next(e["validation"] for e in events if e.get("type") == "validation")
     assert first["passed"] is False
     assert any("syllables, aiming" in i for i in first["issues"])
@@ -244,7 +253,7 @@ def test_every_attempt_nonrhyming_finalizes_incomplete_not_verified(
                         lambda messages, **kw: '{"passed": true, "summary": "ok", "lines": []}'
                         if _is_critic(messages)
                         else "Line 1: Take my heart\nLine 2: Walking down the street")  # never rhymes 'heart'
-    events = list(cowriter.stream_song_interactive(max_retries=2, **_LOVE))
+    events = list(cowriter.stream_song_interactive(_make_love_song(2)))
 
     # Every attempt failed on the engine's rhyme check.
     assert all(e["validation"]["passed"] is False
@@ -252,7 +261,7 @@ def test_every_attempt_nonrhyming_finalizes_incomplete_not_verified(
     inc = [e for e in events if e.get("type") == "section_incomplete"]
     assert inc and inc[0]["reason"] == "did not pass validation"
     done = next(e for e in events if e.get("type") == "complete")
-    assert done["status"] == "incomplete"
+    assert done["song"]["status"] == "incomplete"
     assert saved and saved[-1].status == "incomplete"
 
 
@@ -265,9 +274,10 @@ def test_a_failed_block_makes_the_whole_section_incomplete(
     # block must not erase the earlier failure. Needs the corpus for phonetics.
     if cowriter.workbench.db is None:
         pytest.skip("corpus database not available")
-    four = dict(
-        prompt="love", story="x", model="test-model", section_plan="[Verse 1]",
-        syllable_target="3-6", rhyme_scheme="ABAB", max_sections=1,
+    four = SongGeneration(
+        brief="love", story="x", model="test-model", section_plan=["Verse 1"],
+        syllable_min=3, syllable_max=6, rhyme_scheme="ABAB", max_sections=1,
+        max_retries=2, author_engine_prompt=False,
         answers={"section_lines": "4 lines per section", "lines_per_turn": "2 lines per turn"},
     )
     # Block 1 (lines 1-2, A/B openers, no rhyme contract between them) passes.
@@ -284,11 +294,11 @@ def test_a_failed_block_makes_the_whole_section_incomplete(
     saved: list[object] = []
     monkeypatch.setattr(cowriter.song_store, "save", lambda gen: saved.append(gen) or gen)
     monkeypatch.setattr(cowriter, "_chat", chat)
-    events = list(cowriter.stream_song_interactive(max_retries=2, **four))
+    events = list(cowriter.stream_song_interactive(four))
 
     vals = [e["validation"]["passed"] for e in events if e.get("type") == "validation"]
     assert True in vals and False in vals  # block 1 passed, block 2 failed
     done = next(e for e in events if e.get("type") == "complete")
-    assert done["status"] == "incomplete"
-    assert any(s["reason"] == "did not pass validation" for s in done["incomplete_sections"])
+    assert done["song"]["status"] == "incomplete"
+    assert any(s["reason"] == "did not pass validation" for s in done["song"]["incomplete_sections"])
     assert saved and saved[-1].status == "incomplete"

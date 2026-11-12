@@ -28,9 +28,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from songwriter.ai.generation import SongGeneration
 from songwriter.corpus.ingest import normalize_section
 from songwriter.craft.stats import TRAFFIC_DIRECTOR_WORDS, detect_poetic_inversion
-
 _TAG_RE = re.compile(r"\[([^\]]+)\]")
 
 try:
@@ -65,38 +65,22 @@ class SectionDraft:
     def ok(self) -> bool:
         return not self.issues
 
-
-@dataclass
-class SongDraft:
-    sections: list[SectionDraft]
-    lyrics: str
-    final_issues: list[str] = field(default_factory=list)
-    repaired: int = 0
-    polished: bool = False
-
     def to_dict(self) -> dict[str, Any]:
-        sec_list = []
-        for s in self.sections:
-            sec_list.append({
-                "name": s.name,
-                "kind": s.kind,
-                "line_count": len(s.lines),
-                "lines": list(s.lines),
-                "attempts": s.attempts,
-                "issues": s.issues,
-                "resolved": s.resolved,
-                "performer": getattr(s, "performer", ""),
-                "display_tag": getattr(s, "display_tag", ""),
-                "rhyme_api_calls": getattr(s, "rhyme_api_calls", []),
-                "attempt_history": getattr(s, "attempt_history", []),
-            })
         return {
-            "lyrics": self.lyrics,
-            "polished": self.polished,
-            "repaired_sections": self.repaired,
-            "final_issues": self.final_issues,
-            "sections": sec_list,
+            "name": self.name,
+            "kind": self.kind,
+            "line_count": len(self.lines),
+            "lines": list(self.lines),
+            "attempts": self.attempts,
+            "target_syllables": self.target_syllables,
+            "issues": list(self.issues),
+            "resolved": list(self.resolved),
+            "performer": self.performer,
+            "display_tag": self.display_tag,
+            "rhyme_api_calls": list(self.rhyme_api_calls),
+            "attempt_history": list(self.attempt_history),
         }
+
 
 
 def parse_plan(plan: str) -> list[str]:
@@ -139,14 +123,19 @@ class SectionDrafter:
         return wrapper
     # ------------------------------------------------------------ targets
 
-    def contour_target(self, kind: str, syllable_target: str | None) -> tuple[int | None, str]:
+    def contour_target(self, kind: str, syllable_target: str | int | tuple[int, int] | None = None) -> tuple[int | None, str]:
         """Resolve a per-line syllable target and the evidence behind it.
 
         An explicit writer choice wins. Otherwise the corpus supplies the
         commonest contour for this section kind.
         """
-        if syllable_target:
-            nums = [int(n) for n in re.findall(r"\d+", syllable_target)]
+        if syllable_target is not None:
+            if isinstance(syllable_target, (int, float)):
+                return round(syllable_target), f"writer target {syllable_target}"
+            if isinstance(syllable_target, (tuple, list)) and syllable_target:
+                mid = round(sum(syllable_target) / len(syllable_target))
+                return mid, f"writer target {syllable_target[0]}-{syllable_target[-1]}"
+            nums = [int(n) for n in re.findall(r"\d+", str(syllable_target))]
             if nums:
                 mid = round(sum(nums) / len(nums))
                 return mid, f"writer target {syllable_target}"
@@ -169,10 +158,15 @@ class SectionDrafter:
             return round(float(avg)), f"corpus average for a {kind} line"
         return None, ""
 
-    def contour_range(self, kind: str, syllable_target: str | None) -> tuple[int | None, int | None]:
+    def contour_range(self, kind: str, syllable_target: str | int | tuple[int, int] | None = None) -> tuple[int | None, int | None]:
         """Resolve the (min, max) syllable bounds for a section kind."""
-        if syllable_target:
-            nums = [int(n) for n in re.findall(r"\d+", syllable_target)]
+        if syllable_target is not None:
+            if isinstance(syllable_target, (tuple, list)) and len(syllable_target) >= 2:
+                return min(syllable_target[0], syllable_target[1]), max(syllable_target[0], syllable_target[1])
+            if isinstance(syllable_target, (int, float)):
+                val = int(syllable_target)
+                return max(1, val - 1), val + 1
+            nums = [int(n) for n in re.findall(r"\d+", str(syllable_target))]
             if len(nums) >= 2:
                 return min(nums[0], nums[1]), max(nums[0], nums[1])
             if len(nums) == 1:
@@ -362,10 +356,11 @@ class SectionDrafter:
                 pass
         return self.fresh_rhymes(w_clean, limit=limit, mood=mood, min_concreteness=min_concreteness)
 
-    def build_thematic_clusters(
-        self, brief: str, story: str, answers: dict[str, str], spec: dict[str, Any]
-    ) -> list[list[str]]:
+    def build_thematic_clusters(self, song: SongGeneration) -> list[list[str]]:
         """Extract key physical seeds from brief/story and build rich Rhyme Suites from RhymeDB."""
+        brief = song.brief or ""
+        story = song.story or ""
+        answers = song.answers or {}
         raw_seeds = self._seed_words(brief + " " + story, answers)
         banned_suffixes = ("ing", "tion", "sion", "ment", "ence", "ance", "ity", "ness", "able", "ible", "fully", "lessly", "ed")
         banned_words = {"project", "system", "issue", "issues", "landscape", "timetabling", "stability", "schedule", "schedules", "process", "feature", "features", "architecture", "infrastructure"}
@@ -381,15 +376,15 @@ class SectionDrafter:
         candidate_seeds = list(dict.fromkeys(clean_seeds))[:5]
         clusters = []
         seen_rimes = set()
+        mood = song.moods[0] if song.moods else None
         for s in candidate_seeds:
             rhymes = self.query_rhymes(
                 s,
                 limit=8,
-                allow_slang=spec.get("allow_slang", True),
-                allow_offensive=spec.get("allow_offensive", False),
-                allow_phrases=spec.get("allow_phrases", True),
-                mood=spec.get("target_mood"),
-                min_concreteness=spec.get("min_concreteness"),
+                allow_slang=song.allow_slang,
+                allow_offensive=song.allow_offensive,
+                allow_phrases=song.allow_phrases,
+                mood=mood,
             )
             # Filter out non-poetic words from rhymes as well
             clean_rhymes = [
@@ -413,13 +408,11 @@ class SectionDrafter:
         kind: str,
         couplet_idx: int,
         target_syls: tuple[int, int],
-        story: str,
-        spec: dict[str, Any],
+        song: SongGeneration,
         prior_lines: list[str],
         prior_rimes: set[str],
         suggested_cluster: list[str] | None = None,
         role_info: dict[str, str] | None = None,
-        model: str | None = None,
     ) -> tuple[str, str, str, dict[str, Any]]:
         """Draft a 2-line rhyming couplet with upfront rhyme candidates and Line 1 replacement on dead ends."""
         t_a = target_syls[0]
@@ -433,7 +426,7 @@ class SectionDrafter:
 
         p_a = f"""Audio engine scansion task: Generate Line 1 of Couplet {couplet_idx+1} for [{name}].
 NARRATIVE CONTEXT:
-{story or 'An original narrative.'}
+{song.story or 'An original narrative.'}
 {context_block}
 CONSTRAINTS:
 - Write exactly ONE line.
@@ -443,7 +436,7 @@ CONSTRAINTS:
 
 Output the ONE line only. No quotes, no commentary."""
 
-        text_a = self.chat([{"role": "user", "content": p_a}], model=model, temperature=0.75, max_tokens=150).strip()
+        text_a = self.chat([{"role": "user", "content": p_a}], model=song.model, temperature=0.75, max_tokens=150).strip()
         line_a = self._clean_single_line(text_a)
         if not line_a and text_a.splitlines():
             line_a = text_a.splitlines()[0].strip()
@@ -455,11 +448,10 @@ Output the ONE line only. No quotes, no commentary."""
         rhymes = self.query_rhymes(
             w_a,
             limit=25,
-            allow_slang=spec.get("allow_slang", True),
-            allow_offensive=spec.get("allow_offensive", False),
-            allow_phrases=spec.get("allow_phrases", True),
-            mood=spec.get("target_mood"),
-            min_concreteness=spec.get("min_concreteness"),
+            allow_slang=song.allow_slang,
+            allow_offensive=song.allow_offensive,
+            allow_phrases=song.allow_phrases,
+            mood=song.moods[0] if song.moods else None,
         )
         if not rhymes and suggested_cluster:
             rhymes = [w for w in suggested_cluster if w.lower() != w_a.lower()]
@@ -474,7 +466,7 @@ Output the ONE line only. No quotes, no commentary."""
             fallback_anchor = suggested_cluster[1] if len(suggested_cluster) > 1 and suggested_cluster[1].lower() != w_a.lower() else suggested_cluster[0]
             p_a_retry = f"""Audio engine scansion task: Rewrite Line 1 of Couplet {couplet_idx+1} for [{name}].
 NARRATIVE CONTEXT:
-{story or 'An original narrative.'}
+{song.story or 'An original narrative.'}
 {context_block}
 CONSTRAINTS:
 - Write exactly ONE line.
@@ -483,13 +475,20 @@ CONSTRAINTS:
 - {"Concrete sensory anchor (Rusty's Collar): Ground the line in a specific physical object, setting, or sound. SVO word order." if couplet_idx == 0 else "Concrete physical sensory scene or action. SVO word order."}
 
 Output the ONE line only. No quotes, no commentary."""
-            text_a2 = self.chat([{"role": "user", "content": p_a_retry}], model=model, temperature=0.75, max_tokens=150).strip()
+            text_a2 = self.chat([{"role": "user", "content": p_a_retry}], model=song.model, temperature=0.75, max_tokens=150).strip()
             line_a2 = self._clean_single_line(text_a2)
             if line_a2:
                 line_a = line_a2
                 st_a = self.wb.ca.line_stat(line_a)
                 w_a = st_a.end_word or fallback_anchor
-                rhymes = self.query_rhymes(w_a, limit=8, allow_slang=spec.get("allow_slang", True), allow_offensive=spec.get("allow_offensive", False), allow_phrases=spec.get("allow_phrases", True))
+                rhymes = self.query_rhymes(
+                    w_a,
+                    limit=8,
+                    allow_slang=song.allow_slang,
+                    allow_offensive=song.allow_offensive,
+                    allow_phrases=song.allow_phrases,
+                    mood=song.moods[0] if song.moods else None,
+                )
                 if not rhymes and suggested_cluster:
                     rhymes = [w for w in suggested_cluster if w.lower() != w_a.lower()]
 
@@ -504,7 +503,7 @@ Line 1 of the couplet is:
 
 Write Line 2 to complete this rhyming couplet.
 NARRATIVE CONTEXT:
-{story or 'An original narrative.'}
+{song.story or 'An original narrative.'}
 
 CONSTRAINTS:
 - Write exactly ONE line completing the action of Line 1.
@@ -514,7 +513,7 @@ CONSTRAINTS:
 - Natural conversational spoken English. SVO word order only. The line MUST make literal, physical storytelling sense. Do NOT write inverted or nonsensical phrases just to force a rhyme.
 Output the ONE line only. No quotes, no commentary."""
 
-        text_b = self.chat([{"role": "user", "content": p_b}], model=model, temperature=0.75, max_tokens=150).strip()
+        text_b = self.chat([{"role": "user", "content": p_b}], model=song.model, temperature=0.75, max_tokens=150).strip()
         line_b = self._clean_single_line(text_b)
         if not line_b and text_b.splitlines():
             line_b = text_b.splitlines()[0].strip()
@@ -537,7 +536,7 @@ CONSTRAINTS:
 - Natural conversational English. SVO word order.
 
 Output the ONE line only."""
-            text_b2 = self.chat([{"role": "user", "content": p_b_retry}], model=model, temperature=0.7, max_tokens=150).strip()
+            text_b2 = self.chat([{"role": "user", "content": p_b_retry}], model=song.model, temperature=0.7, max_tokens=150).strip()
             line_b2 = self._clean_single_line(text_b2)
             if line_b2:
                 line_b = line_b2
@@ -577,28 +576,18 @@ Output the ONE line only."""
 
     def draft_song(
         self,
-        brief: str,
-        spec: dict[str, Any],
-        plan: str,
-        answers: dict[str, str] | None = None,
-        banned_words: list[str] | None = None,
-        rhyme_scheme: str | None = None,
-        syllable_target: str | None = None,
-        vocal: str | None = None,
-        vocal_roles: dict[str, str] | None = None,
-        reference_song: dict[str, Any] | None = None,
-        story: str = "",
-        model: str | None = None,
+        song: SongGeneration,
+        *,
         polish: bool = True,
-    ) -> SongDraft:
-        names = parse_plan(plan) or ["Verse 1", "Chorus"]
+    ) -> SongGeneration:
+        names = song.planned_sections() or ["Verse 1", "Chorus"]
         drafted: dict[str, SectionDraft] = {}
         ordered: list[SectionDraft] = []
         repaired = 0
 
-        vocal_type = (vocal or spec.get("vocal") or "").strip().lower()
+        vocal_type = (song.vocal or "").strip().lower()
         is_duet = vocal_type == "duet"
-        roles = vocal_roles or {}
+        roles = dict(song.vocal_roles or {})
         if is_duet and not roles:
             roles = {"singer_a": "Singer A (Male Vocal)", "singer_b": "Singer B (Female Vocal)"}
 
@@ -607,28 +596,40 @@ Output the ONE line only."""
 
         for name in names:
             key = name.lower()
+            repeat_name = song.repeat_of(name)
             if key in drafted:
                 # A repeated chorus is the same words in a new position.
                 ordered.append(drafted[key])
+                continue
+            if repeat_name and repeat_name.lower() in drafted:
+                prior_sec = drafted[repeat_name.lower()]
+                rep_role = self.duet_section_role(name, roles) if is_duet else None
+                rep_draft = SectionDraft(
+                    name=name,
+                    kind=prior_sec.kind,
+                    lines=list(prior_sec.lines),
+                    attempts=1,
+                    target_syllables=prior_sec.target_syllables,
+                    issues=[],
+                    resolved=[],
+                    performer=rep_role.get("performer", prior_sec.performer) if rep_role else prior_sec.performer,
+                    display_tag=rep_role.get("tag", f"[{name}]") if rep_role else f"[{name}]",
+                    rhyme_api_calls=[],
+                    attempt_history=[],
+                )
+                drafted[key] = rep_draft
+                ordered.append(rep_draft)
                 continue
 
             role_info = self.duet_section_role(name, roles) if is_duet else None
 
             section = self.draft_section(
                 name=name,
-                brief=brief,
-                spec=spec,
-                answers=answers or {},
-                banned_words=banned_words or [],
-                rhyme_scheme=rhyme_scheme,
-                syllable_target=syllable_target,
+                song=song,
                 prior=ordered,
                 role_info=role_info,
                 used_motifs=used_motifs,
                 used_openers=used_openers,
-                reference_song=reference_song,
-                story=story or spec.get("story", ""),
-                model=model,
             )
             if section.attempts > 1:
                 repaired += 1
@@ -645,62 +646,81 @@ Output the ONE line only."""
                     if len(w) > 4 and w not in used_motifs:
                         used_motifs.append(w)
 
-        lyrics = self._assemble(names, drafted)
-        range_target = self.contour_range("verse", syllable_target)
-        final_issues = self._validate_song(ordered, target_syllables=range_target)
+        # Canonical song.sections receives every actual section dict
+        song.sections = [s.to_dict() for s in ordered]
 
-        draft = SongDraft(
-            sections=ordered, lyrics=lyrics, final_issues=final_issues, repaired=repaired
-        )
+        range_target = self.contour_range("verse", f"{song.syllable_min}-{song.syllable_max}")
+        final_issues = self._validate_song(ordered, target_syllables=range_target)
+        polished_flag = False
 
         if polish and final_issues:
-            polished = self._polish(draft, brief, spec, model)
+            current_lyrics = song.lyrics
+            polished = self._polish(song, final_issues)
             if polished:
                 new_issues = self._validate_lyrics(polished, target_syllables=range_target)
                 try:
                     p_rep = self.wb.check_draft(self._extract_lines(polished))
-                    orig_rep = self.wb.check_draft(self._extract_lines(lyrics))
+                    orig_rep = self.wb.check_draft(self._extract_lines(current_lyrics))
                     # Accept polish only if it maintains rhyme density and strictly reduces issues
                     if p_rep.rhyme_density >= orig_rep.rhyme_density and len(new_issues) < len(final_issues):
-                        draft.lyrics = polished
-                        draft.polished = True
-                        draft.final_issues = new_issues
+                        self._apply_polished_lyrics(song, ordered, polished)
+                        polished_flag = True
+                        final_issues = new_issues
                 except Exception:
                     pass
-        return draft
+
+        song.diagnostics.update({
+            "polished": polished_flag,
+            "repaired_sections": repaired,
+            "final_issues": list(final_issues),
+        })
+        song.status = "incomplete" if final_issues else "finalized"
+        song.incomplete_sections = (
+            [{"name": s["name"], "have": len(s.get("lines", [])),
+              "planned": s.get("line_count", 0), "reason": "did not pass validation"}
+             for s in song.sections if s.get("issues")]
+            if final_issues else []
+        )
+
+        return song
 
     def draft_section(
         self,
         name: str,
-        brief: str,
-        spec: dict[str, Any],
-        answers: dict[str, str],
-        banned_words: list[str],
-        rhyme_scheme: str | None,
-        syllable_target: str | None,
+        song: SongGeneration,
         prior: list[SectionDraft],
         role_info: dict[str, str] | None = None,
         used_motifs: list[str] | None = None,
         used_openers: list[str] | None = None,
-        reference_song: dict[str, Any] | None = None,
-        story: str = "",
-        model: str | None = None,
     ) -> SectionDraft:
         kind = normalize_section(name) or "verse"
+        syllable_target = f"{song.syllable_min}-{song.syllable_max}" if (song.syllable_min and song.syllable_max) else None
         target, evidence = self.contour_target(kind, syllable_target)
         target_range = self.contour_range(kind, syllable_target)
-        lines_wanted = self.section_line_count(kind)
 
-        seeds = self._seed_words(brief, answers)
+        if song.follow_reference_syllables and song.reference_song:
+            ref_sec = song.reference_section(name) or {}
+            contour = [int(c) for c in ref_sec.get("contour") or [] if int(c) > 0]
+            if contour:
+                target = round(sum(contour) / len(contour))
+                target_range = (min(contour), max(contour))
+                evidence = f"reference song '{song.reference_song.get('title', '')}' contour"
+
+        if song.follow_reference_lines and song.reference_song:
+            lines_wanted = song.lines_in_section(name)
+        else:
+            lines_wanted = self.section_line_count(kind)
+
+        seeds = self._seed_words(song.brief, song.answers)
+        mood = song.moods[0] if song.moods else None
         palette = self.rhyme_palette(
             seeds,
-            mood=spec.get("target_mood"),
-            sensory_modality=spec.get("target_sensory_modality"),
-            min_concreteness=spec.get("min_concreteness"),
+            mood=mood,
         )
-        ref_title = reference_song.get("title") if reference_song else None
-        ref_artist = reference_song.get("artist") if reference_song else None
-        ref_id = reference_song.get("id") if reference_song else None
+
+        ref_title = (song.reference_song or {}).get("title")
+        ref_artist = (song.reference_song or {}).get("artist")
+        ref_id = (song.reference_song or {}).get("id")
         exemplar = None
         if hasattr(self.wb, "get_section_exemplar"):
             try:
@@ -709,13 +729,18 @@ Output the ONE line only."""
                     song_title=ref_title,
                     artist=ref_artist,
                     song_id=ref_id,
-                    genre=spec.get("genre"),
+                    genre=song.genre,
                     limit_lines=(lines_wanted * 2) if lines_wanted else 8,
                 )
                 if exemplar and hasattr(exemplar, "lines") and exemplar.lines:
                     lines_wanted = len(exemplar.lines)
             except Exception:
                 exemplar = None
+
+        if song.follow_reference_rhyme:
+            rhyme_scheme = song.section_scheme(name)
+        else:
+            rhyme_scheme = song.rhyme_scheme
 
         lines: list[str] = []
         issues: list[str] = []
@@ -726,20 +751,25 @@ Output the ONE line only."""
         for attempt in range(1, self.max_attempts + 1):
             attempts = attempt
             if attempt == 1:
-                thematic_clusters = self.build_thematic_clusters(brief, story or spec.get("story", ""), answers, spec)
+                thematic_clusters = self.build_thematic_clusters(song)
                 text = self._ask_draft(
-                    name=name, kind=kind, brief=brief, spec=spec, answers=answers,
-                    banned_words=banned_words, rhyme_scheme=rhyme_scheme,
-                    target=target, target_range=target_range, evidence=evidence,
-                    lines_wanted=lines_wanted, palette=palette, prior=prior,
-                    role_info=role_info, used_motifs=used_motifs, used_openers=used_openers,
+                    name=name,
+                    kind=kind,
+                    song=song,
+                    rhyme_scheme=rhyme_scheme,
+                    target=target,
+                    target_range=target_range,
+                    evidence=evidence,
+                    lines_wanted=lines_wanted,
+                    palette=palette,
+                    prior=prior,
+                    role_info=role_info,
+                    used_motifs=used_motifs,
+                    used_openers=used_openers,
                     exemplar=exemplar,
                     thematic_clusters=thematic_clusters,
-                    story=story or spec.get("story", ""),
-                    model=model,
                 )
             else:
-                # Retrieve another structural exemplar from the corpus matching the same structure
                 alt_exemplar = None
                 if hasattr(self.wb, "get_section_exemplar"):
                     try:
@@ -754,11 +784,15 @@ Output the ONE line only."""
                     except Exception:
                         alt_exemplar = None
                 text = self._ask_repair(
-                    name=name, kind=kind, lines=lines, issues=issues,
-                    target=target, target_range=target_range, spec=spec,
-                    banned_words=banned_words, role_info=role_info,
+                    name=name,
+                    kind=kind,
+                    lines=lines,
+                    issues=issues,
+                    target=target,
+                    target_range=target_range,
+                    song=song,
+                    role_info=role_info,
                     exemplar=alt_exemplar or exemplar,
-                    model=model,
                 )
             new_lines = self._extract_lines(text)
             if not new_lines:
@@ -785,9 +819,15 @@ Output the ONE line only."""
         display_tag = role_info.get("tag", f"[{name}]") if role_info else f"[{name}]"
 
         return SectionDraft(
-            name=name, kind=kind, lines=lines, attempts=attempts,
-            target_syllables=target, issues=issues, resolved=resolved,
-            performer=performer, display_tag=display_tag,
+            name=name,
+            kind=kind,
+            lines=lines,
+            attempts=attempts,
+            target_syllables=target,
+            issues=issues,
+            resolved=resolved,
+            performer=performer,
+            display_tag=display_tag,
             rhyme_api_calls=rhyme_api_calls,
             attempt_history=attempt_history,
         )
@@ -904,10 +944,7 @@ Output the ONE line only."""
         self,
         name: str,
         kind: str,
-        brief: str,
-        spec: dict[str, Any],
-        answers: dict[str, str],
-        banned_words: list[str],
+        song: SongGeneration,
         rhyme_scheme: str | None,
         target: int | None,
         target_range: tuple[int | None, int | None] | None,
@@ -920,11 +957,9 @@ Output the ONE line only."""
         used_openers: list[str] | None = None,
         exemplar: Any = None,
         thematic_clusters: list[list[str]] | None = None,
-        story: str = "",
-        model: str | None = None,
     ) -> str:
         decisions = "\n".join(
-            f"- {k.replace('_', ' ')}: {v}" for k, v in answers.items() if v
+            f"- {k.replace('_', ' ')}: {v}" for k, v in song.answers.items() if v
         ) or "- none recorded"
 
         context = ""
@@ -971,8 +1006,10 @@ Output the ONE line only."""
             scheme_line = f"- rhyme scheme: hold {rhyme_scheme.upper()} strictly across these {lines_wanted} lines"
         else:
             scheme_line = "- rhyme scheme: hold AABB or ABAB rhyming pairs. Every line must rhyme cleanly with its partner line. No unrhymed stray lines."
+
+        banned = [w.strip() for w in (song.banned_pairs or []) if w.strip()]
         banned_line = (
-            f"- never use: {', '.join(banned_words)}" if banned_words else ""
+            f"- never use: {', '.join(banned)}" if banned else ""
         )
 
         role_block = ""
@@ -990,8 +1027,27 @@ Output the ONE line only."""
         if used_openers:
             avoid_parts.append(f"- Do NOT start lines with these already used stems: {', '.join(list(dict.fromkeys(used_openers))[:6])}")
         memory_block = ("\nWHOLE-SONG MOTIF MEMORY\n" + "\n".join(avoid_parts) + "\n") if avoid_parts else ""
-        style_val = spec.get("style", "")
-        style_block = f"- Style direction: {style_val}\n" if style_val else ""
+
+        prod_lines = [
+            f"- {song.bpm} BPM, {song.key} {song.scale}, {song.genre}"
+            + (f" ({song.subgenre})" if song.subgenre else ""),
+        ]
+        if song.time_signature:
+            prod_lines.append(f"- Meter: {song.time_signature}")
+        if song.language:
+            prod_lines.append(f"- Language: {song.language}")
+        if song.moods:
+            prod_lines.append(f"- Moods / Atmosphere: {', '.join(song.moods)}")
+        if song.instruments:
+            prod_lines.append(f"- Instrumentation: {', '.join(song.instruments)}")
+        if song.chords:
+            prod_lines.append(f"- Chords: {' - '.join(song.chords)}")
+        if song.vocal:
+            prod_lines.append(f"- Vocal: {song.vocal}")
+        if song.style:
+            prod_lines.append(f"- Style direction: {song.style}")
+        production_block = "\n".join(prod_lines)
+
         exemplar_list = []
         if exemplar:
             exemplar_list.append(exemplar)
@@ -1017,7 +1073,7 @@ Output the ONE line only."""
             + "\n\n".join(exemplar_blocks)
             if exemplar_blocks else ""
         )
-        story_block = f"\nNARRATIVE STORY TREATMENT:\n{story}\n" if story else ""
+        story_block = f"\nNARRATIVE STORY TREATMENT:\n{song.story}\n" if song.story else ""
         exemplar_rule = "- Model your lines on the scansion, phrasing rhythm, and rhyme bindings of the exemplars above."
 
         passages = []
@@ -1025,7 +1081,7 @@ Output the ONE line only."""
             try:
                 passages = self.wb.get_corpus_lyric_passages(
                     reference_title=exemplar.song_title if exemplar else None,
-                    genre=spec.get("genre"),
+                    genre=song.genre,
                     limit=4,
                 )
             except Exception:
@@ -1044,11 +1100,10 @@ Output the ONE line only."""
         prompt = f"""Write ONLY the [{name}] section of a song.
 
 BRIEF
-{brief.strip() or 'An original song.'}
+{song.brief.strip() or 'An original song.'}
 {story_block}
 PRODUCTION
-- {spec.get('bpm')} BPM, {spec.get('music_key')} {spec.get('scale')}, {spec.get('genre')}
-{style_block}
+{production_block}
 WRITER'S DECISIONS
 {decisions}
 {role_block}
@@ -1078,7 +1133,7 @@ Output the {lines_wanted} lines only. No commentary, no numbering."""
 
         return self.chat(
             [{"role": "user", "content": prompt}],
-            model=model,
+            model=song.model,
             temperature=0.8,
             max_tokens=500,
         )
@@ -1091,11 +1146,9 @@ Output the {lines_wanted} lines only. No commentary, no numbering."""
         issues: list[str],
         target: int | None,
         target_range: tuple[int | None, int | None] | None = None,
-        spec: dict[str, Any] | None = None,
-        banned_words: list[str] | None = None,
+        song: SongGeneration | None = None,
         role_info: dict[str, str] | None = None,
         exemplar: Any = None,
-        model: str | None = None,
     ) -> str:
         numbered = "\n".join(f"{i + 1}. {l}" for i, l in enumerate(lines))
 
@@ -1153,6 +1206,9 @@ Output the {lines_wanted} lines only. No commentary, no numbering."""
                 f"{exemplar.format_stencil()}\n"
             )
 
+        banned = [w.strip() for w in (song.banned_pairs or []) if w.strip()] if song else []
+        model = song.model if song else None
+
         prompt = f"""Editorial polish task: Refine the lyrics for [{name}].
 
 CURRENT LINES:
@@ -1167,7 +1223,7 @@ CRAFT GUIDELINES:
 - Conversational reality: Natural cadence and sensory grounding ('leaving the skins on the potato chips') over textbook formal grammar.
 - Reverse couplet logic: Ensure the rhyme landing feels inevitable rather than forced.
 - Keep the same narrative meaning, but solve the identified rhythm, meter, or stock rhyme problems.
-{('- never use: ' + ', '.join(banned_words)) if banned_words else ''}
+{('- never use: ' + ', '.join(banned)) if banned else ''}
 Output the revised lines only. No conversational preamble, no commentary, no numbering."""
         return self.chat(
             [{"role": "user", "content": prompt}],
@@ -1176,25 +1232,48 @@ Output the revised lines only. No conversational preamble, no commentary, no num
             max_tokens=500,
         )
 
-
     def _polish(
-        self, draft: SongDraft, brief: str, spec: dict[str, Any], model: str | None
+        self, song: SongGeneration, final_issues: list[str]
     ) -> str | None:
         """Final whole-song pass over issues only visible across sections."""
+        brief = song.brief.strip() or "An original song."
+
+        prod_lines = [
+            f"- {song.bpm} BPM, {song.key} {song.scale}, {song.genre}"
+            + (f" ({song.subgenre})" if song.subgenre else ""),
+        ]
+        if song.time_signature:
+            prod_lines.append(f"- Meter: {song.time_signature}")
+        if song.language:
+            prod_lines.append(f"- Language: {song.language}")
+        if song.moods:
+            prod_lines.append(f"- Moods / Atmosphere: {', '.join(song.moods)}")
+        if song.instruments:
+            prod_lines.append(f"- Instrumentation: {', '.join(song.instruments)}")
+        if song.chords:
+            prod_lines.append(f"- Chords: {' - '.join(song.chords)}")
+        if song.vocal:
+            prod_lines.append(f"- Vocal: {song.vocal}")
+        if song.style:
+            prod_lines.append(f"- Style direction: {song.style}")
+        production_block = "\n".join(prod_lines)
+
+        current_lyrics = song.lyrics
+
         prompt = f"""This song was measured section by section and is nearly finished.
 Fix the remaining problems without rewriting what already works.
 
 BRIEF
-{brief.strip() or 'An original song.'}
+{brief}
 
 PRODUCTION
-- {spec.get('bpm')} BPM, {spec.get('music_key')} {spec.get('scale')}, {spec.get('genre')}
+{production_block}
 
 CURRENT LYRICS
-{draft.lyrics}
+{current_lyrics}
 
 REMAINING MEASURED PROBLEMS
-{chr(10).join('- ' + i for i in draft.final_issues)}
+{chr(10).join('- ' + i for i in final_issues)}
 
 RULES
 - keep every section tag exactly as it appears, in the same order
@@ -1207,7 +1286,7 @@ Output the complete lyrics with section tags. No commentary."""
         try:
             text = self.chat(
                 [{"role": "user", "content": prompt}],
-                model=model,
+                model=song.model,
                 temperature=0.5,
                 max_tokens=1400,
             )
@@ -1216,9 +1295,64 @@ Output the complete lyrics with section tags. No commentary."""
 
         cleaned = self._strip_commentary(text)
         # A polish pass that loses sections is a regression, not an improvement.
-        if len(_TAG_RE.findall(cleaned)) < len(_TAG_RE.findall(draft.lyrics)):
+        if len(_TAG_RE.findall(cleaned)) < len(_TAG_RE.findall(current_lyrics)):
             return None
         return cleaned or None
+
+    @staticmethod
+    def _parse_tagged_sections(text: str) -> list[tuple[str, list[str]]]:
+        """Parse bracketed section blocks into [(raw_tag_name, lines)]."""
+        sections: list[tuple[str, list[str]]] = []
+        current_tag: str | None = None
+        current_lines: list[str] = []
+        for raw in (text or "").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("```") or line.startswith("#"):
+                continue
+            m = re.match(r"^\[([^\]]+)\]$", line)
+            if m:
+                if current_tag is not None:
+                    sections.append((current_tag, current_lines))
+                current_tag = m.group(1).strip()
+                current_lines = []
+            else:
+                if current_tag is not None:
+                    current_lines.append(line)
+        if current_tag is not None:
+            sections.append((current_tag, current_lines))
+        return sections
+
+    @classmethod
+    def _apply_polished_lyrics(
+        cls, song: SongGeneration, ordered: list[SectionDraft], polished: str
+    ) -> None:
+        """Update section lines from accepted polished lyrics text."""
+        blocks = cls._parse_tagged_sections(polished)
+        if not blocks:
+            return
+
+        if len(blocks) == len(song.sections):
+            for i, (_, lines) in enumerate(blocks):
+                song.sections[i]["lines"] = list(lines)
+                song.sections[i]["line_count"] = len(lines)
+                if i < len(ordered):
+                    ordered[i].lines = list(lines)
+            return
+
+        by_name: dict[str, list[list[str]]] = {}
+        for tag, lines in blocks:
+            clean = tag.split(" - ")[0].strip().lower()
+            by_name.setdefault(clean, []).append(lines)
+
+        for i, sec in enumerate(song.sections):
+            clean = sec.get("name", "").strip().lower()
+            cand_list = by_name.get(clean)
+            if cand_list:
+                lines = cand_list.pop(0) if len(cand_list) > 1 else cand_list[0]
+                sec["lines"] = list(lines)
+                sec["line_count"] = len(lines)
+                if i < len(ordered):
+                    ordered[i].lines = list(lines)
 
     # ---------------------------------------------------------------- output
 

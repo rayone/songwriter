@@ -2,6 +2,7 @@
 
 // ------------------------------------------------ Crafted Songs Management
 let activeCraftedSong = null;
+let activeCraftedRevision = null;
 let craftedSearchTimer = null;
 let selectedCraftedSongIds = new Set();
 async function loadCraftedSongsList() {
@@ -29,30 +30,32 @@ async function loadCraftedSongsList() {
     }
 
     tbody.innerHTML = items.map(function(s) {
-      const isSelected = selectedCraftedSongIds.has(s.id);
-      const activeCls = (activeCraftedSong && activeCraftedSong.id === s.id) ? ' active' : '';
+      const songId = s.song_id;
+      const isSelected = selectedCraftedSongIds.has(songId);
+      const activeCls = (activeCraftedSong && activeCraftedSong.song_id === songId) ? ' active' : '';
+      const previewText = s.lyrics ? s.lyrics.split('\n').filter(l => l.trim() && !l.trim().startsWith('[')).slice(0, 2).join(' / ') : (s.brief || 'No lyrics preview');
       return `
-        <tr class="library-row${activeCls}" onclick="onTableRowClick(event, '${s.id}')">
+        <tr class="library-row${activeCls}" onclick="onTableRowClick(event, '${escapeHtml(songId)}')">
           <td onclick="event.stopPropagation()">
-            <input type="checkbox" class="song-check cursor-pointer" value="${s.id}" onchange="toggleSelectSong('${s.id}', this.checked)">
+            <input type="checkbox" class="song-check cursor-pointer" value="${escapeHtml(songId)}" onchange="toggleSelectSong('${escapeHtml(songId)}', this.checked)">
           </td>
           <td>
-            <div class="fw-700 c-bright fs-md">${escapeHtml(s.title)}</div>
+            <div class="fw-700 c-bright fs-md">${escapeHtml(s.title || 'Untitled Song')}</div>
             <div class="fs-xs c-muted mt-2 max-w-240 truncate">
-              ${escapeHtml(s.lyrics_preview || 'No lyrics preview')}
+              ${escapeHtml(previewText)}
             </div>
           </td>
           <td class="c-cyan fw-500">
-            ${escapeHtml(s.genre || 'Pop')}
+            ${escapeHtml(s.genre || '—')}
           </td>
           <td class="mono fs-sm c-main">
-            ${s.tempo_bpm || 118} BPM <span class="c-muted">•</span> ${escapeHtml(s.musical_key || 'C')} ${escapeHtml(s.scale || 'maj')}
+            ${s.bpm == null ? '—' : `${s.bpm} BPM`} <span class="c-muted">•</span> ${escapeHtml(s.key || '—')} ${escapeHtml(s.scale || '')}
           </td>
           <td>
-            <span class="badge badge-info ${s.status === 'finalized' ? 'duet' : ''} fs-2xs">${escapeHtml(s.status || 'draft')}</span>
+            <span class="badge badge-info ${s.status === 'finalized' ? 'duet' : ''} fs-2xs">${escapeHtml(s.status || 'unknown')}</span>
           </td>
           <td onclick="event.stopPropagation()">
-            <button type="button" class="btn-secondary btn-sm btn-danger-outline" onclick="deleteOneSong('${s.id}', '${escapeHtml(s.title)}')">
+            <button type="button" class="btn-secondary btn-sm btn-danger-outline" onclick="deleteOneSong('${escapeHtml(songId)}', '${escapeHtml(s.title || 'Untitled Song')}')">
               Delete
             </button>
           </td>
@@ -94,7 +97,7 @@ async function batchDeleteSelectedSongs() {
   if (!confirm(`Are you sure you want to permanently delete ${ids.length} selected song(s)?`)) return;
   try {
     const res = await postJSON('/api/crafted_songs/batch_delete', { song_ids: ids });
-    if (activeCraftedSong && ids.includes(activeCraftedSong.id)) {
+    if (activeCraftedSong && ids.includes(activeCraftedSong.song_id)) {
       activeCraftedSong = null;
       if (el('crafted-inspector-empty')) el('crafted-inspector-empty').style.display = 'block';
       if (el('crafted-inspector-content')) el('crafted-inspector-content').style.display = 'none';
@@ -110,7 +113,7 @@ async function deleteOneSong(songId, title) {
   try {
     const res = await fetch('/api/crafted_songs/' + encodeURIComponent(songId), { method: 'DELETE' });
     if (res.ok) {
-      if (activeCraftedSong && activeCraftedSong.id === songId) {
+      if (activeCraftedSong && activeCraftedSong.song_id === songId) {
         activeCraftedSong = null;
         if (el('crafted-inspector-empty')) el('crafted-inspector-empty').style.display = 'block';
         if (el('crafted-inspector-content')) el('crafted-inspector-content').style.display = 'none';
@@ -138,36 +141,36 @@ function onCraftedSearchInput(val) {
 // Inspector fields from one saved generation, so the latest and any older
 // revision render identically.
 function renderInspector(g, status) {
-  const ep = g.engine_prompts || {};
   el('insp-title').innerText = g.title || 'Untitled Song';
-  el('insp-meta').innerText = `${g.artist || 'AI Songwriter'} • ${g.genre || 'Pop'} ${g.subgenre ? '(' + g.subgenre + ')' : ''} • ${g.bpm} BPM in ${g.key} ${g.scale}`;
+  el('insp-meta').innerText = `${g.artist || 'AI Songwriter'} • ${g.genre || 'Pop'}${g.subgenre ? ' (' + g.subgenre + ')' : ''} • ${g.bpm || 92} BPM in ${g.key || 'C'} ${g.scale || 'major'}`;
   el('insp-badges').innerHTML = `
     <span class="badge badge-info">${escapeHtml(g.genre || 'Pop')}</span>
-    <span class="badge badge-info">${escapeHtml(g.bpm)} BPM</span>
-    <span class="badge badge-info">${escapeHtml(g.key)} ${escapeHtml(g.scale)}</span>
-    <span class="badge badge-info ${status === 'finalized' ? 'duet' : ''}">${escapeHtml(status || 'draft')}</span>
+    <span class="badge badge-info">${escapeHtml(g.bpm || 92)} BPM</span>
+    <span class="badge badge-info">${escapeHtml(g.key || 'C')} ${escapeHtml(g.scale || 'major')}</span>
+    <span class="badge badge-info ${status === 'finalized' ? 'duet' : ''}">${escapeHtml(status || g.status || 'draft')}</span>
     ${g.abc_score ? '<span class="badge badge-success">ABC Score Ready</span>' : ''}
   `;
   el('insp-lyrics-sheet').innerHTML = formatLyricsWithBadges(g.lyrics || '');
   el('insp-abc-text').value = g.abc_score || 'No ABC score: this song has no imported MIDI.';
-  el('insp-prompt-songbench').value = ep.songbench || '';
-  el('insp-prompt-minimax').value = ep.minimax || '';
-  el('insp-prompt-yue2').value = (ep.songbench || '') + (g.abc_score ? '\n\n--- ABC SCORE ---\n' + g.abc_score : '');
+  el('insp-prompt-songbench').value = getEnginePromptDisplay(g, 'songbench');
+  el('insp-prompt-minimax').value = getEnginePromptDisplay(g, 'minimax');
+  el('insp-prompt-yue2').value = getEnginePromptDisplay(g, 'yue2');
 }
 async function selectCraftedSong(songId) {
   try {
     const s = await getJSON('/api/crafted_songs/' + encodeURIComponent(songId));
     activeCraftedSong = s;
-    activeCraftedSong.viewRevision = s.revision;
+    activeCraftedRevision = s.revision;
     const emptyState = el('crafted-inspector-empty');
     if (emptyState) emptyState.style.display = 'none';
     const content = el('crafted-inspector-content');
     if (content) content.style.display = 'flex';
-    renderInspector(s.generation || {}, s.status);
+    renderInspector(s, s.status);
 
-    const revs = (await getJSON('/api/crafted_songs/' + encodeURIComponent(songId) + '/revisions')).revisions || [];
+    const revs = await getJSON('/api/crafted_songs/' + encodeURIComponent(songId) + '/revisions');
+    const revList = Array.isArray(revs) ? revs : (revs.revisions || []);
     const sel = el('insp-revision');
-    sel.innerHTML = revs.map(function(r) {
+    sel.innerHTML = revList.map(function(r) {
       const when = r.created_at ? new Date(r.created_at).toLocaleString() : '';
       const label = 'Rev ' + r.revision + (r.revision === s.revision ? ' (latest)' : '') + (when ? ' · ' + when : '');
       return `<option value="${r.revision}">${escapeHtml(label)}</option>`;
@@ -181,11 +184,12 @@ async function selectCraftedSong(songId) {
 async function selectCraftedRevision(rev) {
   if (!activeCraftedSong) return;
   const revision = parseInt(rev, 10);
+  const songId = activeCraftedSong.song_id;
   try {
-    const res = await getJSON('/api/crafted_songs/' + encodeURIComponent(activeCraftedSong.id) + '/revisions/' + revision);
-    activeCraftedSong.viewRevision = revision;
+    const res = await getJSON('/api/crafted_songs/' + encodeURIComponent(songId) + '/revisions/' + revision);
+    activeCraftedRevision = revision;
     el('insp-revision').value = String(revision);
-    renderInspector(res.generation || {}, res.status);
+    renderInspector(res, res.status);
     el('insp-revision-note').innerText = revision === activeCraftedSong.revision ? ''
       : 'Viewing an older revision. Load into Cowriter and save to restore it as revision ' + (activeCraftedSong.revision + 1) + '.';
   } catch (e) {
@@ -204,98 +208,31 @@ function showInspTab(tabName) {
 async function loadCraftedSongIntoCowriter() {
   if (!activeCraftedSong) return;
   let res;
+  const songId = activeCraftedSong.song_id;
   try {
-    const rev = activeCraftedSong.viewRevision;
-    const base = '/api/crafted_songs/' + encodeURIComponent(activeCraftedSong.id);
-    res = await getJSON(rev && rev !== activeCraftedSong.revision ? base + '/revisions/' + rev : base + '/generation');
+    const rev = activeCraftedRevision;
+    const base = '/api/crafted_songs/' + encodeURIComponent(songId);
+    res = await getJSON(rev && rev !== activeCraftedSong.revision ? base + '/revisions/' + rev : base);
   } catch (e) {
     alert('Failed to load song generation: ' + e.message);
     return;
   }
-  const g = res.generation || {};
-  // Regenerating from here saves a new revision of this song, not a new song.
-  state.editingSongId = res.song_id;
+  const g = res;
+  state.song = typeof deepClone === 'function' ? deepClone(g) : JSON.parse(JSON.stringify(g));
+  syncDOMFromSong(state.song);
 
-  // Step 1: model, title, brief, story, and the visible template card
-  if (g.model) {
-    const sel = el('gw-model');
-    if (sel && !Array.from(sel.options).some(o => o.value === g.model)) {
-      sel.add(new Option(g.model + ' (saved)', g.model));
-    }
-    setFieldValue('gw-model', g.model);
-    onModelSelected(g.model);
-  }
-  setFieldValue('gw-title', g.title);
-  setFieldValue('gw-prompt', g.brief);
-  state.storyline = g.story || '';
-  if (el('gw-storyline-text')) el('gw-storyline-text').value = state.storyline;
-  if (el('gw-storyline-container')) el('gw-storyline-container').style.display = state.storyline ? 'flex' : 'none';
-  if (g.template_id) {
-    await showTemplateCard(g.template_id);
-  } else {
-    setFieldValue('gw-style-input', g.style || g.genre);
-  }
-
-  // Step 2: the saved reference as the selected card, plus the saved specs.
-  // Saved values are applied last so a template or blueprint default can't overwrite them.
-  state.referenceSong = g.reference_song || null;
-  state.recommendations = [];
-  if (state.referenceSong) {
-    renderSelectedReference({
-      reference_song: state.referenceSong,
-      suggested_specs: { section_plan: (g.section_plan || []).join(', ') },
-    });
-  } else {
-    clearSelectedReference();
-  }
-  setFieldValue('gw-bpm', g.bpm);
-  setFieldValue('gw-key', g.key);
-  setFieldValue('gw-scale', g.scale);
-  setFieldValue('gw-vocal', g.vocal);
-  if (g.vocal_roles) {
-    setFieldValue('gw-singer-a', g.vocal_roles.singer_a);
-    setFieldValue('gw-singer-b', g.vocal_roles.singer_b);
-  }
-  setFieldValue('gw-syllables', g.syllable_min + '-' + g.syllable_max);
-  setFieldValue('gw-scheme', g.rhyme_scheme);
-  setFieldValue('gw-plan', (g.section_plan || []).map(n => '[' + n + ']').join(', '));
-  setFieldValue('gw-banned', (g.banned_pairs || []).join(', '));
-  if (typeof onVocalChanged === 'function') onVocalChanged();
-
-  // Step 3: the questions exactly as they were asked, with every option selectable
-  state.answers = Object.assign({}, g.answers || {});
-  state.questions = (g.questions || []).map(function(q) {
-    const opts = (q.options || []).slice();
-    const answer = state.answers[q.id];
-    if (answer && !opts.includes(answer)) opts.unshift(answer);
-    return Object.assign({}, q, { options: opts, default: answer || opts[0] || '' });
-  });
-  // The saved questions belong to the saved reference/story just restored above.
-  state.questionsKey = questionsContextKey();
-  if (typeof renderQuestions === 'function') renderQuestions();
-
-  // Step 4: the saved take, carrying its generation so re-saving bumps the revision
-  const lyrics = g.lyrics || '';
-  const ep = g.engine_prompts || {};
+  const takeSong = typeof deepClone === 'function' ? deepClone(g) : JSON.parse(JSON.stringify(g));
   const takeId = state.nextTakeId++;
   state.takes[takeId] = {
     takeId: takeId,
     status: 'completed',
-    statusText: 'Loaded from library: ' + (g.title || 'Untitled Song') + ' (revision ' + res.revision + ')',
+    statusText: 'Loaded from library: ' + (g.title || 'Untitled Song') + ' (revision ' + g.revision + ')',
     statusColor: 'green',
-    lyrics: lyrics,
-    formatted_songbench: (ep.songbench ? ep.songbench + '\n\n' : '') + lyrics,
-    formatted_yue2: (ep.yue2 ? ep.yue2 + '\n\n' : '') + lyrics + (g.abc_score ? '\n\n--- ABC SCORE ---\n' + g.abc_score : ''),
-    formatted_minimax: (ep.minimax ? ep.minimax + '\n\n' : '') + lyrics,
     specPillsHtml: `<span class="m-pill">BPM<b>${escapeHtml(g.bpm)}</b></span><span class="m-pill">Key<b>${escapeHtml(g.key)} ${escapeHtml(g.scale)}</b></span><span class="m-pill">Syllables<b>${g.syllable_min}-${g.syllable_max}</b></span>`,
     scansionPillsHtml: '',
-    trailHtml: '<div class="empty-state">Loaded from library: ' + escapeHtml(g.title) + ' (revision ' + res.revision + ')</div>',
-    model_used: g.model || '',
-    model: g.model || '',
-    songId: res.song_id,
-    generation: g
+    trailHtml: '<div class="empty-state">Loaded from library: ' + escapeHtml(g.title) + ' (revision ' + g.revision + ')</div>',
+    song: takeSong
   };
-  state.unlockedSteps = [1, 2, 3, 4];
   switchTab('ghostwriter');
   goToStep(4);
   if (typeof updateStepperUI === 'function') updateStepperUI();
@@ -303,13 +240,14 @@ async function loadCraftedSongIntoCowriter() {
 }
 function loadCraftedSongIntoEditor() {
   if (!activeCraftedSong || !activeCraftedSong.lyrics) return;
-  openInSongAnalytics(activeCraftedSong.lyrics, activeCraftedSong.title);
+  openInSongAnalytics(activeCraftedSong.lyrics, activeCraftedSong.title || 'Untitled Song');
 }
 async function deleteActiveCraftedSong() {
   if (!activeCraftedSong) return;
-  if (!confirm('Are you sure you want to delete "' + activeCraftedSong.title + '" from your library?')) return;
+  const songId = activeCraftedSong.song_id;
+  if (!confirm('Are you sure you want to delete "' + (activeCraftedSong.title || 'this song') + '" from your library?')) return;
   try {
-    const res = await fetch('/api/crafted_songs/' + encodeURIComponent(activeCraftedSong.id), { method: 'DELETE' });
+    const res = await fetch('/api/crafted_songs/' + encodeURIComponent(songId), { method: 'DELETE' });
     if (res.ok) {
       activeCraftedSong = null;
       el('crafted-inspector-empty').style.display = 'block';

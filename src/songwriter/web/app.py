@@ -16,7 +16,7 @@ import json
 import re
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from contextlib import asynccontextmanager
 import duckdb
@@ -36,6 +36,7 @@ from songwriter.corpus.artist_imports import ArtistImportManager, ImportInProgre
 from songwriter.db import corpus_db
 from songwriter.lexicon.query import RhymeDB, RhymeType
 from songwriter.service import Workbench
+from songwriter.music.engine_prompt import format_lyrics_for_engine
 
 from songwriter.web.musicstudio_v1 import router as musicstudio_v1_router, init_db
 from songwriter.config import AUTH_ENABLED, AUTH_PASSWORD, AUTH_USER, CORPUS_DB, CORS_ORIGINS, DATA_DIR, SONGS_PARQUET, WORKBENCH_DB
@@ -115,126 +116,25 @@ class ValidateFormRequest(BaseModel):
     word: str = Field(default="", description="Target word for acrostic form")
 
 
-class GenerateRequest(BaseModel):
-    title: str | None = Field(default=None, description="Song title")
-    prompt: str = Field(..., description="Song brief: story, scene, or subject")
-    style: str | None = Field(default=None, description="Generic style direction: genre, mood, instrumentation, tempo feel")
-    genre: str | None = Field(default=None, description="Genre selected from DB")
-    template_id: int | None = Field(default=None, description="Production template ID")
-    bpm: int | None = Field(default=None, description="BPM override")
-    music_key: str | None = Field(default=None, description="Key override")
-    scale: str | None = Field(default=None, description="Scale override")
-    vocal: str | None = Field(default=None, description="Vocal delivery")
-    vocal_roles: dict[str, str] | None = Field(default=None, description="Duet roles (singer_a, singer_b)")
-    reference_song: dict[str, Any] | None = Field(default=None, description="Reference song blueprint")
-    banned_words: list[str] | None = Field(default=None, description="Stock rhymes or phrases to exclude")
-    rhyme_scheme: str | None = Field(default=None, description="Target rhyme scheme (AABB, ABAB, etc.)")
-    poetic_form: str | None = Field(default=None, description="Poetic form if any")
-    section_plan: str | None = Field(default=None, description="standard, compact, hook-led, through-composed")
-    syllable_target: str | None = Field(default=None, description="Syllables per line, e.g. 8-10")
-    answers: dict[str, str] | None = Field(default=None, description="Answers to the interview questions")
-    engine_target: str = Field(default="standard", description="Audio engine target: yue2, minimax, or standard")
-    chat_history: list[dict[str, str]] | None = Field(default=None, description="Recent conversation messages")
-    mode: str = Field(default="creator", description="creator (full song) or guide (co-writing)")
-    model: str = Field(default="auto/chat", description="Model identifier")
-    temperature: float = Field(default=0.7, description="Sampling temperature")
-    section_by_section: bool = Field(default=True, description="Draft and validate each section, then polish")
-    author_engine_prompt: bool = Field(default=True, description="Have the model write the YuE2/MiniMax engine prompt")
-
-
-class PreviewInstructionsRequest(BaseModel):
-    prompt: str = Field(default="", description="Song brief")
-    style: str | None = Field(default=None, description="Generic style direction")
-    genre: str | None = Field(default=None, description="Genre")
-    template_id: int | None = Field(default=None, description="Template ID")
-    bpm: int | None = Field(default=None, description="BPM override")
-    music_key: str | None = Field(default=None, description="Key override")
-    scale: str | None = Field(default=None, description="Scale override")
-    vocal: str | None = Field(default=None, description="Vocal delivery")
-    vocal_roles: dict[str, str] | None = Field(default=None, description="Duet roles")
-    reference_song: dict[str, Any] | None = Field(default=None, description="Reference song blueprint")
-    banned_words: list[str] | None = Field(default=None, description="Excluded stock rhymes")
-    rhyme_scheme: str | None = Field(default=None, description="Rhyme scheme")
-    poetic_form: str | None = Field(default=None, description="Poetic form")
-    section_plan: str | None = Field(default=None, description="Section plan key")
-    syllable_target: str | None = Field(default=None, description="Syllables per line")
-    answers: dict[str, str] | None = Field(default=None, description="Interview answers")
-    engine_target: str = Field(default="standard")
-    mode: str = Field(default="creator")
-    model: str = Field(default="auto/chat")
-
-
-class InterviewRequest(BaseModel):
-    brief: str = Field(default="", description="Song brief: story, scene, or subject")
-    style: str | None = Field(default=None, description="Generic style direction")
-    genre: str | None = Field(default=None, description="Writer's genre, independent of the reference")
-    template_id: int | None = Field(default=None, description="Production template ID")
-    reference_song: dict[str, Any] | None = Field(default=None, description="Reference song blueprint")
-    story: str | None = Field(default="", description="Step 1 narrative; questions and their defaults must agree with it")
-    model: str = Field(default="", description="Model identifier selected by user")
-    use_model: bool = Field(default=True, description="Ask the model for brief-specific questions")
-class StorylineRequest(BaseModel):
-    title: str = Field(default="", description="Song title")
-    brief: str = Field(..., description="Song brief: story, scene, or subject")
-    style: str | None = Field(default="", description="Style direction")
-    genre: str | None = Field(default="", description="Genre")
-    bpm: float | int | None = Field(default=None, description="Tempo in BPM")
-    key: str | None = Field(default=None, description="Key")
-    scale: str | None = Field(default=None, description="Scale")
-    template_title: str | None = Field(default="", description="Template title")
-    template_id: int | None = Field(default=None, description="Selected production template ID")
-    model: str = Field(default="", description="Model identifier selected by user")
-
-class RecommendReferencesRequest(BaseModel):
-    brief: str = Field(default="", description="Song brief")
-    story: str = Field(default="", description="Storyline treatment")
-    style: str | None = Field(default="", description="Style direction")
-    genre: str | None = Field(default="", description="Genre")
-    bpm: float | None = Field(default=None, description="Tempo in BPM")
-    key: str | None = Field(default=None, description="Musical Key")
-    scale: str | None = Field(default=None, description="Musical Scale (major/minor)")
-    template_id: int | None = Field(default=None, description="Selected template ID")
-    limit: int = Field(default=4, description="Max recommendations")
-    has_midi: bool = Field(default=False, description="Only songs that have an imported MIDI (ABC score)")
-
 
 class FormatMusicRequest(BaseModel):
-    text: str = Field(..., description="Raw song text or lyrics to format")
-    engine: str = Field(default="all", description="yue2, minimax, or all")
-    template_id: int | None = Field(default=None, description="Production template ID")
-    genre: str | None = Field(default=None, description="Optional genre override")
-    title: str | None = Field(default="Untitled", description="Optional song title")
+    song: SongGeneration = Field(default_factory=SongGeneration)
+    text: str = Field(..., description="Raw lyrics to format, without authoring new style prompts")
+    engine: Literal["all", "yue2", "minimax", "songbench"] = "all"
 
-class DraftInteractiveRequest(BaseModel):
-    prompt: str = Field(default="An original song", description="Song brief")
-    title: str | None = Field(default="Untitled Song", description="Song title")
-    style: str | None = Field(default=None, description="Style description")
-    genre: str | None = Field(default=None, description="Genre")
-    template_id: int | None = Field(default=None, description="Template ID")
-    bpm: int | None = Field(default=None, description="BPM")
-    music_key: str | None = Field(default=None, description="Key")
-    scale: str | None = Field(default=None, description="Scale")
-    vocal: str | None = Field(default=None, description="Vocal")
-    vocal_roles: dict[str, str] | None = Field(default=None, description="Duet roles")
-    reference_song: dict[str, Any] | None = Field(default=None, description="Reference song")
-    banned_words: list[str] | None = Field(default=None, description="Banned words")
-    rhyme_scheme: str | None = Field(default=None, description="Rhyme scheme")
-    section_plan: str | None = Field(default=None, description="Section plan")
-    syllable_target: str | None = Field(default=None, description="Syllable target")
-    answers: dict[str, Any] | None = Field(default=None, description="Producer interview answers")
-    questions: list[dict[str, Any]] | None = Field(default=None, description="Step 3 questions as shown (id, question, why, options, category)")
-    song_id: str | None = Field(default=None, description="Saved song being revised; regenerating saves a new revision of it")
-    story: str | None = Field(default=None, description="3-act story")
-    model: str = Field(default="", description="Model identifier selected by user")
-    max_retries: int = Field(default=5, description="Max validation retry loops per line")
-    max_sections: int | None = Field(default=3, description="Max sections to draft interactively")
 
-class DraftTurnRequest(DraftInteractiveRequest):
-    accepted: list[dict[str, Any]] | None = Field(default=None, description="Turns the writer has already accepted: [{section, lines:[...]}]")
-    reject_reason: str = Field(default="", description="Writer feedback sent to the model when trying a turn again")
-    rejections: list[dict[str, Any]] | None = Field(default=None, description="This turn's rejected drafts + reasons: [{lines:[...], reason}]")
+class DraftTurnRequest(BaseModel):
+    song: SongGeneration
+    accepted: list[dict[str, Any]] | None = Field(default=None, description="Accepted turns")
+    reject_reason: str = Field(default="", description="Feedback for retrying the current turn")
+    rejections: list[dict[str, Any]] | None = Field(default=None, description="Rejected drafts and reasons")
 
 # ---------------------------------------------------------------- JSON APIs (for LLMs & Agents)
+
+@app.get("/api/ai/song_defaults", summary="Get the Canonical Song Model Defaults")
+def get_song_defaults() -> SongGeneration:
+    return SongGeneration()
+
 
 @app.get("/api/status", summary="System Status")
 def get_status() -> dict[str, Any]:
@@ -394,143 +294,41 @@ def get_song_blueprint(
     return bp
 
 @app.post("/api/ai/storyline", summary="Generate 3-Act Narrative Storyline")
-def generate_storyline(req: StorylineRequest) -> dict[str, Any]:
-    story = cowriter.author_story(
-        brief=req.brief,
-        title=req.title or "",
-        style=req.style or "",
-        genre=req.genre or "",
-        bpm=req.bpm,
-        key=req.key,
-        scale=req.scale,
-        template_title=req.template_title or "",
-        template_id=req.template_id,
-        model=req.model,
-    )
-    return {
-        "title": req.title or "Untitled Song",
-        "storyline": story,
-    }
+def generate_storyline(req: SongGeneration) -> SongGeneration:
+    return cowriter.author_story(req)
 
 @app.post("/api/ai/recommend_references", summary="Recommend Reference Songs Based on Story/Style")
-def recommend_references(req: RecommendReferencesRequest) -> list[dict[str, Any]]:
-    return cowriter.recommend_reference_songs(
-        brief=req.brief,
-        story=req.story,
-        style=req.style or "",
-        genre=req.genre or "",
-        bpm=req.bpm,
-        key=req.key,
-        scale=req.scale,
-        template_id=req.template_id,
-        limit=req.limit,
-        has_midi=req.has_midi,
-    )
+def recommend_references(
+    req: SongGeneration,
+    limit: int = Query(4, ge=1, le=20),
+    has_midi: bool = Query(False),
+) -> list[dict[str, Any]]:
+    return cowriter.recommend_reference_songs(req, limit=limit, has_midi=has_midi)
 
 
 @app.post("/api/ai/interview", summary="Production Questions with Defaults for a Brief")
-def interview(req: InterviewRequest) -> dict[str, Any]:
-    return cowriter.interview(
-        brief=req.brief,
-        style=req.style or "",
-        genre=req.genre,
-        template_id=req.template_id,
-        reference_song=req.reference_song,
-        story=req.story or "",
-        model=req.model,
-        use_model=req.use_model,
-    )
+def interview(req: SongGeneration, use_model: bool = Query(True)) -> SongGeneration:
+    return cowriter.interview(req, use_model=use_model)
 
 @app.post("/api/ai/preview_instructions", summary="Preview Verbatim Prompt Sent to Model")
-def preview_instructions(req: PreviewInstructionsRequest) -> dict[str, Any]:
-    return cowriter.build_instructions_payload(
-        prompt=req.prompt or "An original song",
-        style=req.style,
-        genre=req.genre,
-        template_id=req.template_id,
-        bpm=req.bpm,
-        music_key=req.music_key,
-        scale=req.scale,
-        vocal=req.vocal,
-        vocal_roles=req.vocal_roles,
-        reference_song=req.reference_song,
-        banned_words=req.banned_words,
-        rhyme_scheme=req.rhyme_scheme,
-        poetic_form=req.poetic_form,
-        section_plan=req.section_plan,
-        syllable_target=req.syllable_target,
-        answers=req.answers,
-        engine_target=req.engine_target,
-        mode=req.mode,
-        model=req.model,
-    )
+def preview_instructions(req: SongGeneration) -> SongGeneration:
+    return cowriter.build_instructions_payload(cowriter.prepare_generation(req))
 @app.post("/api/ai/draft_interactive", summary="Interactive Turn-by-Turn Line Generation Loop")
-def draft_interactive(req: DraftInteractiveRequest) -> dict[str, Any]:
-    return cowriter.draft_song_interactive(
-        prompt=req.prompt,
-        style=req.style,
-        genre=req.genre,
-        template_id=req.template_id,
-        bpm=req.bpm,
-        music_key=req.music_key,
-        scale=req.scale,
-        vocal=req.vocal,
-        vocal_roles=req.vocal_roles,
-        reference_song=req.reference_song,
-        banned_words=req.banned_words,
-        rhyme_scheme=req.rhyme_scheme,
-        section_plan=req.section_plan,
-        syllable_target=req.syllable_target,
-        answers=req.answers,
-        questions=req.questions,
-        song_id=req.song_id,
-        story=req.story,
-        model=req.model,
-        max_retries=req.max_retries,
-        max_sections=req.max_sections,
-    )
+def draft_interactive(req: SongGeneration) -> SongGeneration:
+    return cowriter.draft_song_interactive(req)
 @app.post("/api/ai/draft_turn", summary="Draft one turn for human review (accept / edit / try again)")
-def draft_turn(req: DraftTurnRequest) -> dict[str, Any]:
-    data = req.model_dump()
-    accepted = data.pop("accepted", None)
-    reject_reason = data.pop("reject_reason", "") or ""
-    rejections = data.pop("rejections", None)
-    return cowriter.draft_turn(accepted=accepted, reject_reason=reject_reason, rejections=rejections, **data)
+def draft_turn(req: DraftTurnRequest) -> SongGeneration:
+    return cowriter.draft_turn(
+        req.song, accepted=req.accepted, reject_reason=req.reject_reason, rejections=req.rejections,
+    )
 @app.post("/api/ai/finalize_turns", summary="Assemble human-accepted turns into a saved song")
-def finalize_turns(req: DraftTurnRequest) -> dict[str, Any]:
-    data = req.model_dump()
-    accepted = data.pop("accepted", None)
-    data.pop("reject_reason", None)
-    data.pop("rejections", None)
-    return cowriter.finalize_turns(accepted=accepted, **data)
+def finalize_turns(req: DraftTurnRequest) -> SongGeneration:
+    return cowriter.finalize_turns(req.song, accepted=req.accepted)
 @app.post("/api/ai/draft_stream", summary="Stream LLM Prompts, Responses, and Scansion Turns in Real Time")
-def draft_stream(req: DraftInteractiveRequest):
+def draft_stream(req: SongGeneration):
     def event_generator():
         try:
-            generator = cowriter.stream_song_interactive(
-                prompt=req.prompt,
-                title=req.title,
-                style=req.style,
-                genre=req.genre,
-                template_id=req.template_id,
-                bpm=req.bpm,
-                music_key=req.music_key,
-                scale=req.scale,
-                vocal=req.vocal,
-                vocal_roles=req.vocal_roles,
-                reference_song=req.reference_song,
-                banned_words=req.banned_words,
-                rhyme_scheme=req.rhyme_scheme,
-                section_plan=req.section_plan,
-                syllable_target=req.syllable_target,
-                answers=req.answers,
-                questions=req.questions,
-                song_id=req.song_id,
-                story=req.story,
-                model=req.model,
-                max_retries=req.max_retries,
-                max_sections=req.max_sections,
-            )
+            generator = cowriter.stream_song_interactive(req)
             for ev in generator:
                 yield f"data: {json.dumps(ev)}\n\n"
         except Exception as exc:
@@ -568,124 +366,25 @@ def get_template(template_id: int) -> dict[str, Any]:
 
 
 @app.post("/api/music/format", summary="Format Any Raw Lyrics for YuE2 & MiniMax Music 03")
-def format_music(req: FormatMusicRequest) -> dict[str, Any]:
-    template = None
-    if req.template_id and cowriter.studio_db.is_available:
-        template = cowriter.studio_db.get_template_detail(req.template_id)
-    elif cowriter.studio_db.is_available:
-        template = cowriter.studio_db.get_best_match(genre=req.genre or "Pop")
-
-    bpm = 90
-    genre_str = req.genre or "Pop"
-    yue2_style = f"English, {bpm} BPM, {genre_str}, melodic vocals, acoustic accompaniment"
-    minimax_caption = f"[Global Metadata]\nbpm is {bpm}. key is C, and scale is major. {genre_str}."
-
-    if template:
-        meta = template.get("metadata", {})
-        bpm = meta.get("bpm") or bpm
-        genre_str = f"{meta.get('genre', '')} / {meta.get('subgenre', '')}".strip(" /") or genre_str
-        yue2_style = template.get("yue2_style") or yue2_style
-        minimax_caption = template.get("minimax_caption") or minimax_caption
-
-    clean_lyrics = cowriter._clean_lyrics(req.text)
-    if not clean_lyrics.startswith("["):
-        clean_lyrics = "[Verse 1]\n" + clean_lyrics
-
+def format_music(req: FormatMusicRequest) -> dict[str, str]:
+    req.song.sections = cowriter._sections_from_lyrics(cowriter._clean_lyrics(req.text))
+    engines = ("yue2", "minimax", "songbench") if req.engine == "all" else (req.engine,)
     return {
-        "title": req.title,
-        "clean_lyrics": clean_lyrics,
-        "bpm": bpm,
-        "genre": genre_str,
-        "yue2_package": {
-            "style": yue2_style,
-            "lyrics": clean_lyrics,
-            "cot": "full"
-        },
-        "minimax_package": {
-            "caption": minimax_caption,
-            "lyrics": clean_lyrics
-        },
-        "formatted_yue2": f"Style: {yue2_style}\n\n{clean_lyrics}",
-        "formatted_minimax": f"{minimax_caption}\n\n{clean_lyrics}"
+        engine: "\n\n".join(part for part in (
+            req.song.engine_prompts.get(engine, ""),
+            format_lyrics_for_engine(req.song.lyrics, engine),
+        ) if part)
+        for engine in engines
     }
 
 
 @app.post("/api/ai/generate", summary="Generate Production-Ready Lyrics & Audio Packages")
-def generate_lyrics(req: GenerateRequest) -> dict[str, Any]:
+def generate_lyrics(req: SongGeneration) -> SongGeneration:
     try:
-        result = cowriter.generate(
-            title=req.title or "Untitled Song",
-            prompt=req.prompt,
-            style=req.style,
-            genre=req.genre,
-            template_id=req.template_id,
-            bpm=req.bpm,
-            music_key=req.music_key,
-            scale=req.scale,
-            vocal=req.vocal,
-            vocal_roles=req.vocal_roles,
-            reference_song=req.reference_song,
-            banned_words=req.banned_words,
-            rhyme_scheme=req.rhyme_scheme,
-            poetic_form=req.poetic_form,
-            section_plan=req.section_plan,
-            syllable_target=req.syllable_target,
-            answers=req.answers,
-            engine_target=req.engine_target,
-            chat_history=req.chat_history,
-            mode=req.mode,
-            model=req.model,
-            temperature=req.temperature,
-            section_by_section=req.section_by_section,
-            author_engine_prompt=req.author_engine_prompt,
-        )
-
-        # Validate unique sung lines: a chorus repeating three times is how songs
-        # work, not a repetition defect, and counting it as one inflates every ratio.
-        seen: set[str] = set()
-        clean_lines: list[str] = []
-        for raw in result["lyrics"].splitlines():
-            line = raw.strip()
-            if not line or line.startswith(("[", "<|", "(")):
-                continue
-            low = line.lower()
-            if low in seen:
-                continue
-            seen.add(low)
-            clean_lines.append(line)
-        check = None
-        if clean_lines:
-            try:
-                # A whole song, not the first 16 lines: cross-section stock pairs
-                # are exactly what a one-section window cannot see.
-                check_res = wb.check_draft(clean_lines, kind="verse", target_syllables=req.syllable_target or "8-10")
-                check = {
-                    "line_count": check_res.line_count,
-                    "rhyme_scheme": check_res.rhyme_scheme,
-                    "rhyme_density": check_res.rhyme_density,
-                    "metric_consistency": check_res.metric_consistency,
-                    "contour": check_res.contour,
-                    "issues": check_res.issues,
-                    "mean_concreteness": check_res.mean_concreteness,
-                    "dominant_modality": check_res.dominant_modality,
-                    "valence": check_res.valence,
-                    "arousal": check_res.arousal,
-                    "dominant_emotion": check_res.dominant_emotion,
-                    "sensory_anchors": check_res.sensory_anchors,
-                }
-            except Exception:
-                # The craft report is advisory: a failure here must not lose the
-                # generated lyrics, which are the actual result.
-                traceback.print_exc()
-                check = None
-
-        return {
-            **result,
-            "craft_check": check,
-        }
-    except Exception as e:
+        return cowriter.generate(req)
+    except Exception as exc:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 #: Every rhyme relation the dictionary supports, for the API and the UI.
@@ -1174,10 +873,6 @@ def get_starter_prompts(limit: int = 10) -> list[dict[str, Any]]:
 # Crafted Songs API (for MusicStudio integration)
 # -------------------------------------------------------------
 
-class CraftedSongSaveRequest(BaseModel):
-    id: str | None = Field(default=None, description="Song id when updating an existing song")
-    status: str = Field(default="draft", description="Workflow status: draft, finalized, rendered")
-    generation: dict[str, Any] = Field(..., description="Complete SongGeneration document")
 
 
 @app.get("/api/crafted_songs", summary="List All Crafted Songs (for MusicStudio)")
@@ -1189,54 +884,42 @@ def list_crafted_songs(
     sort_order: str = Query("desc", description="Sort order: asc or desc"),
     limit: int = Query(100, ge=1, le=500, description="Max songs to return"),
     offset: int = Query(0, ge=0, description="Offset"),
-) -> list[dict[str, Any]]:
+) -> list[SongGeneration]:
     return cowriter.list_crafted_songs(
         status=status, genre=genre, query=q, sort_by=sort_by, sort_order=sort_order, limit=limit, offset=offset
     )
 
 @app.get("/api/crafted_songs/{song_id}", summary="Get Full Crafted Song Details & ABC Score")
-def get_crafted_song(song_id: str) -> dict[str, Any]:
-    song = cowriter.get_crafted_song(song_id)
+def get_crafted_song(song_id: str) -> SongGeneration:
+    song = cowriter.load_generation(song_id)
     if not song:
         raise HTTPException(status_code=404, detail=f"Crafted song '{song_id}' not found")
     return song
 
 
 @app.post("/api/crafted_songs", summary="Save or Update a Crafted Song")
-def save_crafted_song(req: CraftedSongSaveRequest) -> dict[str, Any]:
-    gen = SongGeneration.from_record(req.generation, song_id=req.id or "", status=req.status)
-    if not gen.model:
-        raise HTTPException(status_code=422, detail="generation.model is required; select a model in Step 1.")
-    prior = cowriter.load_generation(req.id) if req.id else None
-    cowriter.save_generation(gen)
-    # Identical content is not re-stored: tell the UI so it can say "no changes".
-    unchanged = prior is not None and gen.revision == prior.revision
-    return {"status": "unchanged" if unchanged else "saved", "song_id": gen.song_id,
-            "revision": gen.revision, "take_group": gen.take_group, "take_number": gen.take_number}
+def save_crafted_song(req: SongGeneration) -> SongGeneration:
+    if not req.model:
+        raise HTTPException(status_code=422, detail="model is required; select a model in Step 1.")
+    return cowriter.save_generation(req)
 
 
-@app.get("/api/crafted_songs/{song_id}/generation", summary="Load a Song's Full Generation for Steps 1-4")
-def load_crafted_generation(song_id: str) -> dict[str, Any]:
-    gen = cowriter.load_generation(song_id)
-    if gen is None:
-        raise HTTPException(status_code=404, detail=f"Crafted song '{song_id}' not found")
-    return {"song_id": gen.song_id, "revision": gen.revision, "status": gen.status, "generation": gen.to_record()}
 
 
 @app.get("/api/crafted_songs/{song_id}/revisions", summary="List a Song's Saved Revisions")
-def list_crafted_revisions(song_id: str) -> dict[str, Any]:
+def list_crafted_revisions(song_id: str) -> list[SongGeneration]:
     revs = cowriter.list_revisions(song_id)
     if not revs:
         raise HTTPException(status_code=404, detail=f"Crafted song '{song_id}' not found")
-    return {"song_id": song_id, "revisions": revs}
+    return revs
 
 
 @app.get("/api/crafted_songs/{song_id}/revisions/{revision}", summary="Load One Saved Revision")
-def load_crafted_revision(song_id: str, revision: int) -> dict[str, Any]:
+def load_crafted_revision(song_id: str, revision: int) -> SongGeneration:
     gen = cowriter.load_revision(song_id, revision)
     if gen is None:
         raise HTTPException(status_code=404, detail=f"Revision {revision} of '{song_id}' not found")
-    return {"song_id": song_id, "revision": revision, "status": gen.status, "generation": gen.to_record()}
+    return gen
 
 class BatchDeleteSongsRequest(BaseModel):
     song_ids: list[str] = Field(..., description="List of song IDs to delete")

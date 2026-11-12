@@ -141,6 +141,9 @@ _DEFAULTS: dict[str, tuple[str, str, list[str], str]] = {
         "FULL CREATIVE BRIEF & PRODUCTION CONTEXT:\n"
         "- Song Title: {title}\n"
         "- Genre / Sound Direction: {genre}\n"
+        "- Lyrics Language: {language}\n"
+        "- Moods / Atmosphere: {moods}\n"
+        "- Instrumentation: {instruments}\n"
         "- Story & Narrative Arc: {story}\n"
         "- Song Structure (Section Plan):\n{section_map}\n"
         "- Musical Specs: {bpm} BPM in {key} {scale} ({vocal} arrangement)\n"
@@ -151,7 +154,7 @@ _DEFAULTS: dict[str, tuple[str, str, list[str], str]] = {
         "  Melodic Pre-Line Hums & Chants: {vocable_filler}\n"
         "  Placement & Rhythm Rule: {vocable_usage}\n\n"
         + _LINE_RULES,
-        ["title", "genre", "story", "section_map", "bpm", "key", "scale", "vocal",
+        ["title", "genre", "language", "moods", "instruments", "story", "section_map", "bpm", "key", "scale", "vocal",
          "register", "vocable_category", "vocable_calls", "vocable_filler", "vocable_usage"],
         "The shared creative-brief header prepended to every line-writing prompt. "
         "The writing rules live at the end of this prompt.",
@@ -218,7 +221,7 @@ _DEFAULTS: dict[str, tuple[str, str, list[str], str]] = {
         "REFERENCE MATERIAL from a comparable production template. Use it for register and\n"
         "level of detail. Describe THIS song; do not copy these sentences.\n"
         "{reference}\n\n"
-        "Produce two things in JSON:\n\n"
+        "Produce the following in JSON:\n\n"
         "1. \"minimax\": one entry per field below. Each is 2-4 sentences of specific\n"
         "   production description written for this brief: name instruments, frequency\n"
         "   character, spatial treatment and how the arrangement changes across sections.\n"
@@ -231,13 +234,17 @@ _DEFAULTS: dict[str, tuple[str, str, list[str], str]] = {
         "   - Language (e.g. \"English\")\n"
         "   - Tempo and Key/Scale: exactly \"{bpm} BPM\" and \"{music_key} {scale}\"\n"
         "   - Genre and Influences: authoritative genre \"{genre}\" and stylistic subgenres/influences\n"
-        "   - Concrete Instruments: specific physical instruments, synth types, bass types, and drum elements reflecting the brief and answers (e.g. \"heavy 808 sub bass\", \"analog synth arpeggios\", \"crisp trap hi-hats\", \"layered acoustic piano\", \"punchy kick\")\n"
-        "   - Dominant Mood & Atmosphere: emotional attitude and sonic ambiance (e.g. \"dark moody atmosphere\", \"tense nocturnal energy\", \"melancholic\")\n"
-        "   - Vocal Tone & Delivery: vocal gender and delivery tone (e.g. \"female vocal\", \"breathy emotive delivery\", \"whispered vocals\", \"intimate close-mic vocal\"). CRITICAL: If vocal spec is instrumental, DO NOT output any vocal or voice tags; output \"instrumental\" instead.\n"
-        "   Choose instruments and vocal tone for THIS song, not from the examples above.\n"
+        "   - Concrete Instruments: specific physical instruments, synth types, bass types, and drum elements reflecting the brief and answers\n"
+        "   - Dominant Mood & Atmosphere: emotional attitude and sonic ambiance\n"
+        "   - Vocal Tone & Delivery: vocal gender and delivery tone (or \"instrumental\" if instrumental)\n"
         "   Shape: [\"<language>\", \"{bpm} BPM\", \"{genre}\", \"<influence>\", \"<instruments>\", \"<mood>\", \"<vocal gender>\", \"<vocal tone>\", \"{music_key} {scale}\"]\n\n"
+        "3. Canonical metadata fields:\n"
+        "   - \"language\": string naming the lyric language (e.g. \"English\")\n"
+        "   - \"moods\": list of 2-5 concise mood/atmosphere terms (e.g. [\"dark\", \"melancholic\"])\n"
+        "   - \"instruments\": list of 3-6 specific concrete instruments chosen for this song (e.g. [\"layered acoustic piano\", \"warm bass guitar\", \"subtle brushed snare\"])\n"
+        "   - \"vocal\": concise vocal delivery specification (e.g. \"warm baritone lead vocal\" or \"instrumental\")\n\n"
         "Respond with JSON only:\n"
-        '{{"minimax": {{"<field>": "<text>"}}, "yue2": ["tag", "tag"]}}',
+        '{{"minimax": {{"<field>": "<text>"}}, "yue2": ["tag", "tag"], "language": "English", "moods": ["mood1", "mood2"], "instruments": ["inst1", "inst2"], "vocal": "vocal description"}}',
         [
             "title", "brief", "story", "style", "genre", "subgenre", "language",
             "bpm", "music_key", "scale", "vocal", "decisions", "reference", "field_list",

@@ -75,9 +75,10 @@ def test_every_ambient_reply_with_hey_is_stripped_before_it_ships(monkeypatch: p
     # (Whether the turn passes depends on the corpus rhyme check; this test asserts
     # only the stripping, which holds with or without the corpus.)
     cw = SongwriterCowriter()
-    love = dict(
-        prompt="night drive", story="x", model="test-model", genre="Ethereal Trance Ambient",
-        section_plan="[Verse 1]", syllable_target="3-6", rhyme_scheme="AABB", max_sections=1,
+    love = SongGeneration(
+        brief="night drive", story="x", model="test-model", genre="Ethereal Trance Ambient",
+        section_plan=["Verse 1"], syllable_min=3, syllable_max=6, rhyme_scheme="AABB", max_sections=1,
+        max_retries=2, author_engine_prompt=False,
         answers={"section_lines": "2 lines per section", "validation_mode": "auto songwriter"},
     )
 
@@ -87,7 +88,7 @@ def test_every_ambient_reply_with_hey_is_stripped_before_it_ships(monkeypatch: p
         return "Line 1: Take my heart, hey\nLine 2: Break me apart, hey"
 
     monkeypatch.setattr(cw, "_chat", chat)
-    events = list(cw.stream_song_interactive(max_retries=2, **love))
+    events = list(cw.stream_song_interactive(love))
     # Every response the engine saw had the tag stripped.
     for e in events:
         if e.get("type") == "response":

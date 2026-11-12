@@ -29,6 +29,7 @@ import json
 import re
 from typing import Any, Callable
 
+from songwriter.ai.generation import SongGeneration
 from songwriter import prompt_templates
 # MiniMax section order, matching the engine's documented prompt layout.
 MINIMAX_LAYOUT: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
@@ -250,7 +251,9 @@ def render_songbench(
     if vocal:
         first_clause = vocal.split(".")[0].strip()
         low = first_clause.lower()
-        if "duet" in low or ("male" in low and "female" in low):
+        if "duet" in low or (
+            re.search(r"\bmale\b", low) and re.search(r"\bfemale\b", low)
+        ):
             tokens.append("Male and Female Duet Vocals")
         elif "instrumental" in low or "no lead" in low:
             tokens.append("Instrumental")
@@ -309,29 +312,26 @@ class EnginePromptBuilder:
 
     def build(
         self,
-        spec: dict[str, Any],
+        song: SongGeneration,
         segments: dict[str, dict[str, str]] | None = None,
-        brief: str = "",
-        answers: dict[str, str] | None = None,
-        model: str | None = None,
-        use_model: bool = True,
-    ) -> dict[str, Any]:
-        """Return both engine prompts plus the field values behind them.
+        use_model: bool | None = None,
+    ) -> SongGeneration:
+        """Return both engine prompts plus the field values behind them on the same song.
 
         Deterministic scaffolding always applies: the attributes line is rebuilt
-        from `spec`, so both prompts agree with the lyric specification even when
-        the model call fails.
+        from canonical song fields, so both prompts agree with the lyric specification
+        even when the model call fails.
         """
+        use_model_resolved = song.author_engine_prompt if use_model is None else bool(use_model)
         inputs = template_inputs(segments or {})
-        vocal = str(spec.get("vocal") or "").strip()
-        instrumental = vocal.lower() == "instrumental"
-        resolved_bpm = int(spec.get("bpm") or 90)
+        instrumental = song.instrumental
+        resolved_bpm = int(song.bpm or 90)
 
         attributes = basic_attributes(
             bpm=resolved_bpm,
-            key=str(spec.get("music_key") or "C"),
-            scale=str(spec.get("scale") or "major"),
-            genre=str(spec.get("genre") or "Pop"),
+            key=str(song.key or "C"),
+            scale=str(song.scale or "major"),
+            genre=str(song.genre or "Pop"),
         )
         # Template prose may name the template's own tempo; reconcile it so the
         # prompt never states two different tempos.
@@ -341,77 +341,137 @@ class EnginePromptBuilder:
         fields["basic_attributes"] = attributes
 
         authored: dict[str, Any] | None = None
-        if use_model and self.chat is not None:
-            authored = self._author(spec, inputs, brief, answers or {}, model, instrumental)
+        if use_model_resolved and self.chat is not None:
+            authored = self._author(song, inputs, instrumental)
 
         if authored:
             for key, value in (authored.get("minimax") or {}).items():
                 text = str(value or "").strip()
                 if text:
                     fields[key] = text
-            # The attributes line is never model-authored: it must match the spec.
             fields["basic_attributes"] = attributes
 
+        # Update canonical metadata fields on song FIRST before final rendering.
+        # Populated user metadata must win; empty/unknown is not explicit intent merely
+        # because the full JSON document includes it.
+        user_lang = str(song.language or "").strip()
+        auth_lang = str((authored or {}).get("language") or "").strip()
+        is_unknown_lang = user_lang.lower() in {"", "unknown", "n/a", "null", "none"}
+        if is_unknown_lang:
+            if auth_lang and auth_lang.lower() not in {"unknown", "n/a", "null", "none"}:
+                song.language = auth_lang
+            else:
+                song.language = "English"
+        elif user_lang:
+            song.language = user_lang
+
+        auth_moods = list((authored or {}).get("moods") or [])
+        if not song.moods:
+            if auth_moods:
+                song.moods = auth_moods
+            else:
+                ans_mood = (song.answers or {}).get("emotional_attitude") or (song.answers or {}).get("target_mood") or (song.answers or {}).get("mood")
+                if ans_mood:
+                    song.moods = [m.strip() for m in re.split(r"[,;\n]", str(ans_mood)) if m.strip()]
+
+        auth_instruments = list((authored or {}).get("instruments") or [])
+        if not song.instruments:
+            if auth_instruments:
+                song.instruments = auth_instruments
+            else:
+                ans_inst = (song.answers or {}).get("instrumentation") or (song.answers or {}).get("instruments")
+                if ans_inst:
+                    song.instruments = [i.strip() for i in re.split(r"[,;\n]", str(ans_inst)) if i.strip()]
+
         if instrumental:
+            song.vocal = "instrumental"
             for key in VOCAL_FIELDS:
                 fields.pop(key, None)
-        elif vocal.lower() == "duet":
-            if not fields.get("vocal_gender_timbre") or "singer" not in fields.get("vocal_gender_timbre", "").lower():
-                fields["vocal_gender_timbre"] = (
-                    "Singer A (Male): warm, resonant baritone with emotional depth. "
-                    "Singer B (Female): clear, expressive mezzo-soprano with airy highs."
-                )
-            if not fields.get("vocal_style") or "duet" not in fields.get("vocal_style", "").lower():
-                fields["vocal_style"] = (
-                    "Narrative conversational verses trading between Singer A and Singer B, "
-                    "swelling into full dual-vocal harmony in the choruses."
-                )
-            if not fields.get("harmony_backing") or "harmony" not in fields.get("harmony_backing", "").lower():
-                fields["harmony_backing"] = (
-                    "Tight two-part vocal harmonies across all choruses and the outro, "
-                    "blending both lead timbres."
-                )
-        # Augmentation layer: If the template is sparse (lacks vocal details, instrument lifecycle,
-        # or global scenarios), augment with verified genre-specific MiniMax M3 architecture.
-        fields = self._augment_sparse_fields(fields, spec, inputs, instrumental)
+        else:
+            cur_vocal = str(song.vocal or "").strip()
+            auth_vocal = str((authored or {}).get("vocal") or "").strip()
+            if auth_vocal and auth_vocal.lower() != "instrumental":
+                cur_low = cur_vocal.lower()
+                auth_low = auth_vocal.lower()
 
-        genre = str(spec.get("genre") or "Pop").strip()
-        subgenre = str(spec.get("subgenre") or "").strip()
+                has_male = "male" in cur_low and "female" not in cur_low
+                has_female = "female" in cur_low
+                auth_has_male = "male" in auth_low and "female" not in auth_low
+                auth_has_female = "female" in auth_low
+
+                gender_conflict = (has_male and auth_has_female) or (has_female and auth_has_male)
+
+                is_generic = cur_low in {
+                    "", "melodic lead", "lead vocal", "vocal", "vocals", "lead",
+                    "male", "female", "male vocal", "female vocal", "male vocals", "female vocals",
+                }
+
+                if is_generic and not gender_conflict:
+                    if has_male and not auth_has_male:
+                        song.vocal = f"{auth_vocal} (Male)"
+                    elif has_female and not auth_has_female:
+                        song.vocal = f"{auth_vocal} (Female)"
+                    else:
+                        song.vocal = auth_vocal
+                elif not cur_vocal:
+                    song.vocal = auth_vocal
+
+            if song.vocal.lower() == "duet":
+                if not fields.get("vocal_gender_timbre") or "singer" not in fields.get("vocal_gender_timbre", "").lower():
+                    fields["vocal_gender_timbre"] = (
+                        "Singer A (Male): warm, resonant baritone with emotional depth. "
+                        "Singer B (Female): clear, expressive mezzo-soprano with airy highs."
+                    )
+                if not fields.get("vocal_style") or "duet" not in fields.get("vocal_style", "").lower():
+                    fields["vocal_style"] = (
+                        "Narrative conversational verses trading between Singer A and Singer B, "
+                        "swelling into full dual-vocal harmony in the choruses."
+                    )
+                if not fields.get("harmony_backing") or "harmony" not in fields.get("harmony_backing", "").lower():
+                    fields["harmony_backing"] = (
+                        "Tight two-part vocal harmonies across all choruses and the outro, "
+                        "blending both lead timbres."
+                    )
+
+        fields = self._augment_sparse_fields(fields, song, inputs, instrumental)
+
+        genre = str(song.genre or "Pop").strip()
+        subgenre = str(song.subgenre or "").strip()
         genre_parts = [p.strip() for p in genre.split("/") if p.strip()]
         if subgenre and subgenre not in genre_parts:
             genre_parts.append(subgenre)
 
         yue2_tags = list((authored or {}).get("yue2") or [])
         if not yue2_tags:
-            yue2_tags = self._fallback_tags(spec, inputs, instrumental)
+            yue2_tags = self._fallback_tags(song, inputs, instrumental)
+
+        lead_inst = song.instruments[0] if song.instruments else None
+        bed_inst = song.instruments[1] if len(song.instruments) > 1 else None
         songbench_prompt = render_songbench(
             genre=genre,
-            mood=spec.get("target_mood") or (answers or {}).get("emotional_attitude"),
-            lead=inputs.get("primary_layer"),
-            bed=inputs.get("secondary_layer") or inputs.get("embellishments"),
+            mood=song.moods[0] if song.moods else None,
+            lead=lead_inst,
+            bed=bed_inst,
             groove=inputs.get("groove_foundation"),
-            vocal=vocal,
+            vocal=song.vocal,
             bpm=resolved_bpm,
         )
 
-        return {
+        song.engine_prompts = {
             "minimax": render_minimax(fields, instrumental=instrumental),
             "yue2": render_yue2(list(yue2_tags), resolved_bpm, protected=genre_parts),
             "songbench": songbench_prompt,
-            "fields": fields,
-            "section_arc": inputs.get("section_arc", ""),
-            "authored_by": "model" if authored else "template",
         }
+        song.engine_prompt_author = "model" if authored else "template"
+        song.engine_prompt_section_arc = inputs.get("section_arc", "")
 
+        return song
     # ------------------------------------------------------------- authoring
 
     def _author(
         self,
-        spec: dict[str, Any],
+        song: SongGeneration,
         inputs: dict[str, str],
-        brief: str,
-        answers: dict[str, str],
-        model: str | None,
         instrumental: bool,
     ) -> dict[str, Any] | None:
         """Ask the model to write the engine prompt for *this* song."""
@@ -429,11 +489,11 @@ class EnginePromptBuilder:
             if key not in ("section_arc",)
         ) or "- none available"
 
-        decisions = "\n".join(f"- {k.replace('_', ' ')}: {v}" for k, v in answers.items() if v)
+        decisions = "\n".join(f"- {k.replace('_', ' ')}: {v}" for k, v in song.answers.items() if v)
 
         field_list = "\n".join(f'  "{key}"  -- {label}' for key, label in wanted)
 
-        raw_vocal = str(spec.get("vocal") or "").strip()
+        raw_vocal = str(song.vocal or "").strip()
         if instrumental:
             vocal_desc = "instrumental, no vocals (strictly no vocal or voice descriptors)"
         elif raw_vocal.lower() == "duet":
@@ -444,16 +504,16 @@ class EnginePromptBuilder:
             vocal_desc = "melodic lead vocal"
 
         prompt_params = {
-            "title": str(spec.get("title") or "").strip() or "- not specified",
-            "subgenre": str(spec.get("subgenre") or "").strip() or "- none specified",
-            "language": str(spec.get("language") or "").strip() or "Follow the brief and producer answers; English if unspecified",
-            "brief": brief.strip() or "An original song.",
-            "story": str(spec.get("story") or "").strip() or "- none provided",
-            "style": str(spec.get("style") or spec.get("genre") or "").strip() or "- not specified",
-            "genre": str(spec.get("genre") or "Pop").strip(),
-            "bpm": int(spec.get("bpm") or 90),
-            "music_key": str(spec.get("music_key") or "C").strip(),
-            "scale": str(spec.get("scale") or "major").strip(),
+            "title": str(song.title or "").strip() or "- not specified",
+            "subgenre": str(song.subgenre or "").strip() or "- none specified",
+            "language": str(song.language or "").strip() or "Follow the brief and producer answers; English if unspecified",
+            "brief": song.brief.strip() or "An original song.",
+            "story": str(song.story or "").strip() or "- none provided",
+            "style": str(song.style or song.genre or "").strip() or "- not specified",
+            "genre": str(song.genre or "Pop").strip(),
+            "bpm": int(song.bpm or 90),
+            "music_key": str(song.key or "C").strip(),
+            "scale": str(song.scale or "major").strip(),
             "vocal": vocal_desc,
             "decisions": decisions or "- none recorded",
             "reference": reference,
@@ -464,7 +524,7 @@ class EnginePromptBuilder:
         try:
             raw = self.chat(
                 [{"role": "user", "content": prompt}],
-                model=model,
+                model=song.model,
                 temperature=0.5,
                 max_tokens=1600,
             )
@@ -486,11 +546,39 @@ class EnginePromptBuilder:
         minimax = {k: v for k, v in minimax.items() if k in allowed and isinstance(v, str)}
         if not minimax and not yue2:
             return None
-        return {"minimax": minimax, "yue2": [t for t in yue2 if isinstance(t, str)]}
+
+        lang = data.get("language")
+        language_val = str(lang).strip() if lang and isinstance(lang, str) and str(lang).strip() else None
+
+        moods_raw = data.get("moods")
+        moods_val: list[str] = []
+        if isinstance(moods_raw, list):
+            moods_val = [str(m).strip() for m in moods_raw if str(m).strip()]
+        elif isinstance(moods_raw, str) and moods_raw.strip():
+            moods_val = [m.strip() for m in re.split(r"[,;\n]", moods_raw) if m.strip()]
+
+        instruments_raw = data.get("instruments")
+        instruments_val: list[str] = []
+        if isinstance(instruments_raw, list):
+            instruments_val = [str(i).strip() for i in instruments_raw if str(i).strip()]
+        elif isinstance(instruments_raw, str) and instruments_raw.strip():
+            instruments_val = [i.strip() for i in re.split(r"[,;\n]", instruments_raw) if i.strip()]
+
+        vocal_raw = data.get("vocal")
+        vocal_val = str(vocal_raw).strip() if vocal_raw and isinstance(vocal_raw, str) and str(vocal_raw).strip() else None
+
+        return {
+            "minimax": minimax,
+            "yue2": [t for t in yue2 if isinstance(t, str)],
+            "language": language_val,
+            "moods": moods_val,
+            "instruments": instruments_val,
+            "vocal": vocal_val,
+        }
     @staticmethod
     def _augment_sparse_fields(
         fields: dict[str, str],
-        spec: dict[str, Any],
+        song: SongGeneration,
         inputs: dict[str, str],
         instrumental: bool,
     ) -> dict[str, str]:
@@ -499,10 +587,9 @@ class EnginePromptBuilder:
         Preserves existing rich prose if present, but synthesizes high-fidelity 
         vocal, arrangement, and spatial details if the template is sparse.
         """
-        genre = str(spec.get("genre") or "Pop").strip()
-        bpm = int(spec.get("bpm") or 90)
-        vocal = str(spec.get("vocal") or "melodic lead").strip()
-        is_duet = vocal.lower() == "duet"
+        genre = str(song.genre or "Pop").strip()
+        bpm = int(song.bpm or 90)
+        vocal = str(song.vocal or "melodic lead").strip()
         g_low = genre.lower()
 
         # 1. Global Metadata: Application Scenarios & Sonics Profile
@@ -529,7 +616,7 @@ class EnginePromptBuilder:
         if not instrumental:
             vt = fields.get("vocal_gender_timbre", "").strip()
             if not vt or "unspecified" in vt.lower() or len(vt) < 30:
-                if is_duet:
+                if vocal.lower() == "duet":
                     fields["vocal_gender_timbre"] = "Singer A (Male) and Singer B (Female) trading vocal roles, blending baritone warmth with bright expressive highs."
                 elif any(k in g_low for k in ["jazz", "soul"]):
                     fields["vocal_gender_timbre"] = "A smoky, breathy vocal texture with velvety mid-range warmth and intimate mic presence."
@@ -554,13 +641,18 @@ class EnginePromptBuilder:
         # 3. Arrangement: Instrument Lifecycle & Groove Progression
         il = fields.get("instrument_lifecycle", "")
         if not il or "Primary:" not in il or len(il) < 40:
-            primary_lead = retune_tempo(inputs.get("primary_layer") or "A central melodic motif on piano or synth", bpm)
-            secondary_bed = retune_tempo(inputs.get("secondary_layer") or inputs.get("embellishments") or "Bass foundation and harmonic pads", bpm)
-            fields["instrument_lifecycle"] = (
-                f"Primary: {primary_lead.split('.')[0].strip()}.\n"
-                f"Secondary: {secondary_bed.split('.')[0].strip()} entering to support dynamic lifts."
-            )
-
+            if song.instruments:
+                lead_inst = song.instruments[0]
+                bed_inst = song.instruments[1] if len(song.instruments) > 1 else "Supporting rhythm and bass accompaniment"
+                fields["instrument_lifecycle"] = (
+                    f"Primary: {lead_inst}.\n"
+                    f"Secondary: {bed_inst} entering to support dynamic lifts."
+                )
+            else:
+                fields["instrument_lifecycle"] = (
+                    "Primary: Central melodic lead defining the song's thematic motif.\n"
+                    "Secondary: Full rhythmic and harmonic accompaniment entering on section changes."
+                )
         gf = fields.get("groove_foundation", "").strip()
         if not gf or len(gf) < 20:
             if any(k in g_low for k in ["trap", "hip-hop", "boom bap"]):
@@ -580,18 +672,26 @@ class EnginePromptBuilder:
 
     @staticmethod
     def _fallback_tags(
-        spec: dict[str, Any], inputs: dict[str, str], instrumental: bool
+        song: SongGeneration, inputs: dict[str, str], instrumental: bool
     ) -> list[str]:
         """Tags distilled from resolved values when the model supplies none."""
-        tags = ["English"]
-        genre = str(spec.get("genre") or "").strip()
+        tags = [str(song.language or "English")]
+        genre = str(song.genre or "").strip()
         if genre:
             tags.extend(part.strip() for part in genre.split("/") if part.strip())
+        if song.subgenre and song.subgenre not in tags:
+            tags.append(song.subgenre)
+        for mood in song.moods:
+            if mood not in tags:
+                tags.append(mood)
+        for inst in song.instruments:
+            if inst not in tags:
+                tags.append(inst)
 
         if instrumental:
             tags.append("instrumental")
         else:
-            vocal = str(spec.get("vocal") or "").strip()
+            vocal = str(song.vocal or "").strip()
             if vocal:
                 low = vocal.lower()
                 if low == "duet":
@@ -599,16 +699,8 @@ class EnginePromptBuilder:
                 else:
                     tags.append(vocal if ("vocal" in low or "voice" in low) else f"{vocal} vocal")
 
-        # First clause of the primary layer names the lead instrument.
-        primary = inputs.get("primary_layer", "")
-        if primary:
-            clause = primary.split(".")[0]
-            head = re.sub(r"^(a|an|the)\s+", "", clause, flags=re.I).strip()
-            if 1 <= len(head.split()) <= 5:
-                tags.append(head)
-
-        key = str(spec.get("music_key") or "").strip()
-        scale = str(spec.get("scale") or "").strip()
+        key = str(song.key or "").strip()
+        scale = str(song.scale or "").strip()
         if key and scale:
             tags.append(f"{key} {scale}")
         return tags

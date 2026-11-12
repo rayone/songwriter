@@ -11,7 +11,7 @@ function harness() {
     'gw-questions': '', 'gw-selected-template-id': '7', 'gw-storyline-text': 'a story',
     'gw-interview-status': ''
   })) nodes.set(id, { value, style: {} });
-  const c = vm.createContext({ document: { getElementById: id => nodes.get(id), addEventListener() {} }, window: {}, updateStepperUI() {}, onVocalChanged() {} });
+  const c = vm.createContext({ document: { getElementById: id => nodes.get(id), addEventListener() {} }, window: {}, updateStepperUI() {}, onVocalChanged() {}, structuredClone: typeof structuredClone !== 'undefined' ? structuredClone : undefined });
   for (const file of ['core.js', 'cowriter/interview.js', 'cowriter/reference.js']) {
     vm.runInContext(readFileSync(new URL('../src/songwriter/web/static/js/' + file, import.meta.url), 'utf8'), c);
   }
@@ -20,13 +20,15 @@ function harness() {
 
 test('draft requests carry original genre separately from reference and Step 3 answer', () => {
   const { c } = harness();
-  c.state.referenceSong = { genre: 'Pop' };
-  c.state.questions = [{ id: 'genre', question: 'Which genre?', category: 'production' }];
-  c.state.answers.genre = 'Melodic House';
+  if (!c.state.song) c.state.song = {};
+  c.state.song.reference_song = { genre: 'Pop' };
+  c.state.song.questions = [{ id: 'genre', question: 'Which genre?', category: 'production' }];
+  if (!c.state.song.answers) c.state.song.answers = {};
+  c.state.song.answers.genre = 'Melodic House';
   const params = c.currentParams();
   assert.equal(params.genre, 'Progressive House / Vocal Trance');
   assert.equal(params.reference_song.genre, 'Pop');
-  assert.equal(params.answers.genre.answer, 'Melodic House');
+  assert.equal(params.answers.genre, 'Melodic House');
 });
 
 test('template genre uses metadata instead of the entire production caption', () => {
@@ -47,7 +49,8 @@ test('reference selection does not replace the writer sound profile', () => {
 
 test('changing original genre invalidates producer answers', () => {
   const { c, nodes } = harness();
-  c.state.questions = [{ id: 'genre' }];
+  if (!c.state.song) c.state.song = {};
+  c.state.song.questions = [{ id: 'genre' }];
   c.state.questionsKey = c.questionsContextKey();
   assert.equal(c.questionsAreCurrent(), true);
   nodes.get('gw-style-input').value = 'Indie';
@@ -65,12 +68,13 @@ test('interview receives genre and template; stale genre replies are ignored', a
   nodes.get('gw-style-input').value = 'Indie';
   resolve({ questions: [{ id: 'genre', default: 'Pop' }] });
   await loading;
-  assert.equal(c.state.questions.length, 0);
+  assert.equal((c.state.song.questions || []).length, 0);
 });
 
 test('updating an imported reference discards its in-flight producer questions', async () => {
   const { c } = harness();
-  c.state.referenceSong = { id: -1, title: 'City Windows', genre: 'Darkwave' };
+  if (!c.state.song) c.state.song = {};
+  c.state.song.reference_song = { id: -1, title: 'City Windows', genre: 'Darkwave' };
   let resolve;
   c.postJSON = () => new Promise(r => { resolve = r; });
   const loading = c.loadInterviewQuestions();
@@ -78,13 +82,14 @@ test('updating an imported reference discards its in-flight producer questions',
   c.invalidateQuestions();
   resolve({ questions: [{ id: 'stale-hook', default: 'the old chorus' }] });
   await loading;
-  assert.equal(c.state.questions.find(q => q.id === 'stale-hook'), undefined);
+  assert.equal((c.state.song.questions || []).find(q => q.id === 'stale-hook'), undefined);
   assert.equal(c.state.questionsKey, null);
 });
 
 test('genre belongs in the left creative column, including older saved interviews', () => {
   const { c, nodes } = harness();
-  c.state.questions = [
+  if (!c.state.song) c.state.song = {};
+  c.state.song.questions = [
     { id: 'bpm', category: 'production', question: 'Tempo', default: '120', options: ['120'] },
     { id: 'genre', category: 'production', question: 'Choose a genre', default: 'Indie', options: ['Indie', 'Pop'] }
   ];
@@ -99,8 +104,10 @@ test('genre belongs in the left creative column, including older saved interview
 test('AI labels are visible but do not contaminate saved genre values', () => {
   const { c } = harness();
   const q = { id: 'genre', question: 'Choose a genre', default: 'Indie', options: ['Indie', 'Pop', 'Indie Folk'], option_labels: { 'Indie Folk': 'AI recommendation' } };
-  c.state.questions = [q];
-  c.state.answers.genre = 'Indie Folk';
+  if (!c.state.song) c.state.song = {};
+  c.state.song.questions = [q];
+  if (!c.state.song.answers) c.state.song.answers = {};
+  c.state.song.answers.genre = 'Indie Folk';
   assert.match(c.renderQuestion(q, 0), /Indie Folk <small>\(AI recommendation\)<\/small>/);
-  assert.equal(c.collectAnswers().genre.answer, 'Indie Folk');
+  assert.equal(c.collectAnswers().genre, 'Indie Folk');
 });

@@ -60,8 +60,23 @@ CREATE TABLE IF NOT EXISTS song_revisions (
     revision   INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT current_timestamp,
     generation JSON NOT NULL,
+    status     VARCHAR,
     PRIMARY KEY (song_id, revision)
 );
+"""
+
+_SONG_COLUMNS = """
+    s.generation, s.id AS song_id, s.revision, s.status,
+    s.created_at, s.updated_at, s.rating, s.notes,
+    (SELECT count(*) FROM crafted_songs t
+     WHERE COALESCE(NULLIF(t.generation->>'$.take_group', ''), t.id) =
+           COALESCE(NULLIF(s.generation->>'$.take_group', ''), s.id)) AS take_count
+"""
+
+_REVISION_SOURCE = """
+    (SELECT r.generation, r.song_id AS id, r.revision, r.status,
+            c.created_at, r.created_at AS updated_at, c.rating, c.notes
+     FROM song_revisions r JOIN crafted_songs c ON c.id = r.song_id) s
 """
 
 # Sortable list columns; anything else falls back to updated_at.
@@ -83,6 +98,7 @@ def ensure_schema(db: Database | None = None) -> Database:
             if key not in _schema_ready:
                 with db.transaction() as cur:
                     cur.execute(SCHEMA)
+                    cur.execute("ALTER TABLE song_revisions ADD COLUMN IF NOT EXISTS status VARCHAR")
                 _schema_ready.add(key)
     return db
 
@@ -97,22 +113,18 @@ class SongStore:
     def db(self) -> Database:
         return ensure_schema(self._db)
 
+    @staticmethod
+    def _decode(row: dict[str, Any]) -> SongGeneration:
+        document = json.loads(row.pop("generation"))
+        return SongGeneration.from_record(document, **row)
+
     # ----------------------------------------------------------------- write
 
     def save(self, gen: SongGeneration) -> SongGeneration:
-        """Upsert the song and snapshot the revision in one transaction.
-
-        Assigns ``song_id`` (new songs) and bumps ``revision``; returns the
-        stored generation. Saving content identical to the latest revision is a
-        no-op that returns that revision, so history only records real changes
-        (a draft auto-saves; pressing Save right after must not duplicate it).
-        Failures raise -- a save is never silently dropped.
-        """
+        """Save this instance and an immutable snapshot, without duplicating derived data."""
+        if gen.status is None:
+            raise ValueError("Choose a status before saving a historical revision with unknown status.")
         song_id = gen.song_id or f"song_{uuid.uuid4().hex[:10]}"
-        # Assign take grouping before serializing. A standalone song is its own group
-        # (take_group = song_id, take_number = 1). A take carried from another take keeps
-        # its take_group; its number is the next free slot in that group. Existing saves
-        # without grouping stay ungrouped (no backfill).
         if not gen.take_group:
             gen.take_group = song_id
         if gen.take_number <= 0:
@@ -122,37 +134,52 @@ class SongStore:
                 (gen.take_group,),
             )
             gen.take_number = int((existing[0] or 0)) + 1 if existing else 1
-        doc = json.dumps(gen.to_record())
+        document = gen.to_record()
         with self.db.transaction() as cur:
-            row = cur.execute("SELECT revision FROM crafted_songs WHERE id = ?", (song_id,)).fetchone()
-            if row:
-                latest = cur.execute(
-                    "SELECT generation FROM song_revisions WHERE song_id = ? AND revision = ?",
-                    (song_id, row[0]),
-                ).fetchone()
-                if latest and json.loads(latest[0]) == json.loads(doc):
-                    cur.execute("UPDATE crafted_songs SET status = ? WHERE id = ?", (gen.status, song_id))
-                    gen.song_id, gen.revision = song_id, row[0]
-                    return gen
-            revision = (row[0] + 1) if row else 1
-            cur.execute(
-                """
-                INSERT INTO crafted_songs (id, revision, status, generation)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    revision = excluded.revision,
-                    status = excluded.status,
-                    generation = excluded.generation,
-                    updated_at = now()
-                """,
-                (song_id, revision, gen.status, doc),
-            )
-            cur.execute(
-                "INSERT INTO song_revisions (song_id, revision, generation) VALUES (?, ?, ?)",
-                (song_id, revision, doc),
-            )
-        gen.song_id = song_id
-        gen.revision = revision
+            row = cur.execute(
+                "SELECT revision, status FROM crafted_songs WHERE id = ?", (song_id,),
+            ).fetchone()
+            latest = cur.execute(
+                "SELECT generation FROM song_revisions WHERE song_id = ? AND revision = ?",
+                (song_id, row[0]),
+            ).fetchone() if row else None
+            unchanged = (row is not None and latest is not None and row[1] == gen.status
+                         and SongGeneration.from_record(json.loads(latest[0]), song_id=song_id).to_record() == document)
+            if unchanged:
+                revision = row[0]
+                cur.execute(
+                    "UPDATE crafted_songs SET rating = ?, notes = ? WHERE id = ?",
+                    (gen.rating, gen.notes, song_id),
+                )
+            else:
+                revision = row[0] + 1 if row else 1
+                encoded = json.dumps(document)
+                cur.execute(
+                    """
+                    INSERT INTO crafted_songs (id, revision, status, generation, rating, notes)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (id) DO UPDATE SET
+                        revision = excluded.revision,
+                        status = excluded.status,
+                        generation = excluded.generation,
+                        rating = excluded.rating,
+                        notes = excluded.notes,
+                        updated_at = now()
+                    """,
+                    (song_id, revision, gen.status, encoded, gen.rating, gen.notes),
+                )
+                cur.execute(
+                    "INSERT INTO song_revisions (song_id, revision, generation, status) VALUES (?, ?, ?, ?)",
+                    (song_id, revision, encoded, gen.status),
+                )
+            row = cur.execute(
+                f"SELECT {_SONG_COLUMNS} FROM crafted_songs s WHERE s.id = ?", (song_id,),
+            ).fetchone()
+            columns = [column[0] for column in cur.description]
+        lifecycle = dict(zip(columns, row))
+        lifecycle.pop("generation")
+        for name, value in lifecycle.items():
+            setattr(gen, name, value)
         return gen
 
     def delete(self, song_ids: list[str]) -> int:
@@ -168,61 +195,27 @@ class SongStore:
     # ------------------------------------------------------------------ read
 
     def load(self, song_id: str) -> SongGeneration | None:
-        row = self.db.read_one(
-            "SELECT generation, revision, status FROM crafted_songs WHERE id = ?", (song_id,)
-        )
-        if not row:
-            return None
-        return SongGeneration.from_record(
-            json.loads(row[0]), song_id=song_id, revision=row[1], status=row[2]
-        )
-
-    def detail(self, song_id: str) -> dict[str, Any] | None:
-        """Flat row (virtual columns + lifecycle) with the full generation attached."""
         rows = self.db.read_dicts(
-            """
-            SELECT id, revision, status, created_at, updated_at, audio_path, rating, notes,
-                   title, artist, brief, genre, subgenre, lyrics, tempo_bpm, musical_key, scale,
-                   vocal_style, model_name, abc_score, style_prompt, engine_prompt, engine_target,
-                   chords, generation
-            FROM crafted_songs WHERE id = ?
-            """,
-            (song_id,),
+            f"SELECT {_SONG_COLUMNS} FROM crafted_songs s WHERE s.id = ?", (song_id,),
         )
-        if not rows:
-            return None
-        out = rows[0]
-        out["generation"] = json.loads(out["generation"])
-        out["sections"] = out["generation"].get("sections", [])
-        return out
+        return self._decode(rows[0]) if rows else None
 
-    def revisions(self, song_id: str) -> list[dict[str, Any]]:
-        """Every saved revision of a song, newest first, with a short preview."""
-        return self.db.read_dicts(
-            """
-            SELECT revision, created_at,
-                   generation->>'$.title' AS title,
-                   substr(generation->>'$.lyrics', 1, 160) AS lyrics_preview
-            FROM song_revisions WHERE song_id = ?
-            ORDER BY revision DESC
-            """,
+    def revisions(self, song_id: str) -> list[SongGeneration]:
+        """Immutable song documents, newest revision first; no reconstruction."""
+        rows = self.db.read_dicts(
+            f"SELECT {_SONG_COLUMNS} FROM {_REVISION_SOURCE} "
+            "WHERE s.id = ? ORDER BY s.revision DESC",
             (song_id,),
         )
+        return [self._decode(row) for row in rows]
 
     def load_revision(self, song_id: str, revision: int) -> SongGeneration | None:
-        """The generation exactly as it was saved at ``revision``.
-
-        Its ``song_id`` stays the song's, so saving it again stores a NEW
-        revision on top (a restore), never overwrites history.
-        """
-        row = self.db.read_one(
-            "SELECT r.generation, s.status FROM song_revisions r JOIN crafted_songs s ON s.id = r.song_id "
-            "WHERE r.song_id = ? AND r.revision = ?",
+        rows = self.db.read_dicts(
+            f"SELECT {_SONG_COLUMNS} FROM {_REVISION_SOURCE} "
+            "WHERE s.id = ? AND s.revision = ?",
             (song_id, int(revision)),
         )
-        if not row:
-            return None
-        return SongGeneration.from_record(json.loads(row[0]), song_id=song_id, revision=int(revision), status=row[1])
+        return self._decode(rows[0]) if rows else None
 
     def list(
         self,
@@ -233,7 +226,7 @@ class SongStore:
         sort_order: str = "desc",
         limit: int = 100,
         offset: int = 0,
-    ) -> list[dict[str, Any]]:
+    ) -> list[SongGeneration]:
         clauses: list[str] = []
         params: list[Any] = []
         if status:
@@ -249,15 +242,13 @@ class SongStore:
         order_col = _SORT_COLUMNS.get(sort_by, "updated_at")
         order_dir = "ASC" if str(sort_order).lower() == "asc" else "DESC"
         params.extend([limit, offset])
-        return self.db.read_dicts(
+        rows = self.db.read_dicts(
             f"""
-            SELECT id, revision, title, artist, genre, subgenre, tempo_bpm, musical_key, scale,
-                   vocal_style, engine_target, status,
-                   (abc_score IS NOT NULL AND abc_score != '') AS has_abc,
-                   rating, created_at, updated_at, substr(lyrics, 1, 160) AS lyrics_preview
-            FROM crafted_songs {where}
+            SELECT {_SONG_COLUMNS}
+            FROM crafted_songs s {where}
             ORDER BY {order_col} {order_dir}
             LIMIT ? OFFSET ?
             """,
             params,
         )
+        return [self._decode(row) for row in rows]

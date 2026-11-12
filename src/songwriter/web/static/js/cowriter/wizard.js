@@ -10,8 +10,8 @@ function onVocalChanged() {
 }
 // ------------------------------------------------ Sequential 4-Step Wizard Navigation
 function goToStep(stepNum) {
-  // Step 4 drafts from the Step 3 answers; stale ones belong to another reference.
-  if (stepNum === 4 && !questionsAreCurrent()) {
+  // Saved takes remain viewable without regenerating their producer interview.
+  if (stepNum === 4 && !questionsAreCurrent() && !Object.keys(state.takes).length) {
     stepNum = 3;
   }
   state.currentStep = stepNum;
@@ -37,10 +37,6 @@ function goToStep(stepNum) {
     if (!questionsAreCurrent()) {
       loadInterviewQuestions();
     }
-  } else if (stepNum === 4) {
-    if (state.activeTakeId && typeof selectTake === 'function') {
-      selectTake(state.activeTakeId);
-    }
   }
 }
 function advanceToStep(stepNum) {
@@ -53,9 +49,7 @@ function advanceToStep(stepNum) {
       return;
     }
   } else if (stepNum === 3) {
-    // Reference track is optional: if none is selected, advance cleanly using template/genre specs
-    // and let Step 3 producer questions calibrate the song's intent.
-    if (!state.referenceSong) {
+    if (!state.song?.reference_song) {
       state.bypassedReference = true;
     }
   } else if (stepNum === 4) {
@@ -71,7 +65,7 @@ function updateStepNavState() {
   // Step 1 Next Button: disabled until Brief and Storyline are present
   const s1Btn = el('btn-next-step-1');
   const hasBrief = !!val('gw-prompt');
-  const hasStory = !!(val('gw-storyline-text') || state.storyline);
+  const hasStory = !!(val('gw-storyline-text') || (state.song && state.song.story));
   const s1Ready = hasBrief && hasStory;
   if (s1Btn) {
     s1Btn.disabled = !s1Ready;
@@ -86,12 +80,12 @@ function updateStepNavState() {
     s2Btn.disabled = false;
     s2Btn.style.opacity = '1';
     s2Btn.style.cursor = 'pointer';
-    s2Btn.innerText = state.referenceSong ? 'Next: Producer Questions ➔' : 'Next: Producer Questions (Use Defaults) ➔';
+    s2Btn.innerText = (state.song && state.song.reference_song) ? 'Next: Producer Questions ➔' : 'Next: Producer Questions (Use Defaults) ➔';
   }
 
   // Step 3 Next Button: disabled until questions are loaded
   const s3Btn = el('btn-next-step-3');
-  const s3Ready = !!(state.questions && state.questions.length > 0);
+  const s3Ready = !!(state.song && state.song.questions && state.song.questions.length > 0);
   if (s3Btn) {
     s3Btn.disabled = !s3Ready;
     s3Btn.style.opacity = s3Ready ? '1' : '0.45';
@@ -102,7 +96,7 @@ function updateStepNavState() {
   // Story Button Label Toggle: "Generate Story" -> "Regenerate Story"
   const genBtn = el('btn-gen-storyline');
   if (genBtn) {
-    const hasStoryAlready = !!(val('gw-storyline-text') || state.storyline);
+    const hasStoryAlready = !!(val('gw-storyline-text') || (state.song && state.song.story));
     const label = hasStoryAlready ? 'Regenerate Story' : 'Generate Story';
     genBtn.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> ${label}`;
   }
@@ -114,9 +108,9 @@ function updateStepperUI() {
     if (!tabBtn || !numEl) continue;
 
     const isActive = state.currentStep === i;
-    const isCompleted = (i === 1 && state.storyline) ||
-                        (i === 2 && (state.referenceSong || state.bypassedReference)) ||
-                        (i === 3 && Object.keys(state.answers).length > 0) ||
+    const isCompleted = (i === 1 && state.song && state.song.story) ||
+                        (i === 2 && ((state.song && state.song.reference_song) || state.bypassedReference)) ||
+                        (i === 3 && state.song && state.song.answers && Object.keys(state.song.answers).length > 0) ||
                         (i === 4 && Object.keys(state.takes).length > 0);
     if (isActive) {
       tabBtn.className='step-tab active';
@@ -138,26 +132,17 @@ async function generateStoryline() {
     setStatus('gw-story-status', 'Please enter a song brief first.', 'yellow');
     return;
   }
-  const tmplIdVal = val('gw-selected-template-id');
-  const tmplId = tmplIdVal ? parseInt(tmplIdVal, 10) : null;
-  const tmplTitle = el('gw-card-tmpl-title')?.innerText || '';
-  const tmplGenre = el('gw-card-tmpl-badges')?.innerText || '';
+  syncSongFromDOM(state.song);
+  state.song.brief = brief;
   setStatus('gw-story-status', 'Generating 3-act narrative treatment...', 'yellow');
   try {
-    const data = await postJSON('/api/ai/storyline', {
-      title: val('gw-title') || '',
-      brief: brief,
-      style: val('gw-style-input') || '',
-      genre: tmplGenre || val('gw-style-input') || '',
-      bpm: parseFloat(val('gw-bpm')) || null,
-      key: val('gw-key') || null,
-      scale: val('gw-scale') || null,
-      template_title: tmplTitle,
-      template_id: tmplId,
-      model: val('gw-model') || state.selectedModel || ''
-    });
-    el('gw-storyline-text').value = data.storyline;
-    el('gw-storyline-container').style.display = 'flex';
+    const returnedSong = await postJSON('/api/ai/storyline', state.song);
+    if (returnedSong) {
+      Object.assign(state.song, returnedSong);
+    }
+    const storyText = state.song.story || '';
+    if (el('gw-storyline-text')) el('gw-storyline-text').value = storyText;
+    if (el('gw-storyline-container')) el('gw-storyline-container').style.display = storyText ? 'flex' : 'none';
     setStatus('gw-story-status', '3-Act storyline ready!', 'green');
     if (!state.unlockedSteps.includes(2)) state.unlockedSteps.push(2);
     updateStepperUI();
@@ -189,7 +174,7 @@ async function loadModels() {
       } else {
         sel.value = models[0];
       }
-      state.selectedModel = sel.value;
+      if (state.song) state.song.model = sel.value;
       if (statusBadge) { statusBadge.innerText = 'Active: ' + sel.value; statusBadge.className = 'badge badge-success c-bright'; }
     } else {
       const reason = (resp && resp.error) || 'No models returned by the endpoint.';
@@ -204,7 +189,7 @@ async function loadModels() {
   }
 }
 function onModelSelected(modelName) {
-  state.selectedModel = modelName;
+  if (state.song) state.song.model = modelName;
   const statusBadge = el('gw-model-status');
   if (statusBadge) statusBadge.innerText = 'Active: ' + modelName;
 }

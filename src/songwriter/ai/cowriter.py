@@ -297,23 +297,17 @@ class SongwriterCowriter:
 
     def engine_prompts(
         self,
-        spec: dict[str, Any],
+        song: SongGeneration,
         segments: dict[str, dict[str, str]] | None = None,
-        brief: str = "",
-        answers: dict[str, str] | None = None,
-        model: str | None = None,
-        use_model: bool = True,
-    ) -> dict[str, Any]:
+        use_model: bool | None = None,
+    ) -> SongGeneration:
         """Build the YuE2 and MiniMax prompts for a resolved production spec."""
+        segs = segments if segments is not None else self._template_segments(song.template_id)
         return EnginePromptBuilder(chat=self._chat).build(
-            spec=spec,
-            segments=segments,
-            brief=brief,
-            answers=answers,
-            model=model or self.get_default_model(),
+            song=song,
+            segments=segs,
             use_model=use_model,
         )
-
     def _style_tokens(self, query: str) -> dict[str, Any]:
         """Split a free-text style brief into DB-backed terms plus free words.
 
@@ -723,14 +717,8 @@ class SongwriterCowriter:
 
     def recommend_reference_songs(
         self,
-        brief: str = "",
-        story: str = "",
-        style: str = "",
-        genre: str = "",
-        bpm: int | float | None = None,
-        key: str | None = None,
-        scale: str | None = None,
-        template_id: int | None = None,
+        song: SongGeneration,
+        *,
         limit: int = 4,
         has_midi: bool = False,
     ) -> list[dict[str, Any]]:
@@ -738,6 +726,15 @@ class SongwriterCowriter:
 
         Each recommendation includes curated guidance explaining why it fits the groove and scansion.
         """
+        brief = song.brief
+        story = song.story
+        style = song.style
+        genre = song.genre
+        bpm = song.bpm
+        key = song.key
+        scale = song.scale
+        template_id = song.template_id
+
         target_bpm: float | None = float(bpm) if (bpm is not None and bpm > 0) else None
         if target_bpm is None:
             hint = self._style_tokens(f"{style} {brief}")["bpm_hint"]
@@ -757,7 +754,6 @@ class SongwriterCowriter:
             target_key = "C"
 
         target_scale = (scale or "major").lower().strip()
-
         # Extract primary genre with strict precedence:
         # "Synth-pop (Electronic Rock)..." must resolve to "pop", not "rock"!
         def resolve_corpus_genre(txt: str) -> str:
@@ -1066,47 +1062,36 @@ class SongwriterCowriter:
             "global_metadata": segs.get("global_metadata", {}),
         }
 
-    def author_story(
-        self,
-        brief: str,
-        title: str = "",
-        style: str = "",
-        genre: str = "",
-        bpm: int | float | None = None,
-        key: str | None = None,
-        scale: str | None = None,
-        template_title: str = "",
-        template_id: int | None = None,
-        model: str = "",
-    ) -> str:
+    def author_story(self, song: SongGeneration) -> SongGeneration:
         """Write a 3-4 sentence cinematic narrative story treatment as a 3-act miniature play,
         strictly grounded in the user's title, brief, character dynamics, tempo pace, and musical genre."""
-        model = (model or "").strip() or self.get_default_model()
-        if not brief and not title:
-            return ""
+        song.model = song.model.strip() or self.get_default_model()
+        if not song.brief and not song.title:
+            song.story = ""
+            return song
 
         context_items = []
-        if title:
+        if song.title:
             # Strip trailing revision tags ("Snowbear 7" -> "Snowbear") so software
             # versioning tags do not become the character's in-world name in the story lore.
-            lore_title = re.sub(r"\s+(?:\d+|v\d+|rev\d+|take\s*\d+)$", "", title.strip(), flags=re.I)
-            context_items.append(f"SONG TITLE: \"{lore_title or title}\"")
-        context_items.append(f"SONG BRIEF & CHARACTER SCENARIO:\n{brief}")
+            lore_title = re.sub(r"\s+(?:\d+|v\d+|rev\d+|take\s*\d+)$", "", song.title.strip(), flags=re.I)
+            context_items.append(f"SONG TITLE: \"{lore_title or song.title}\"")
+        context_items.append(f"SONG BRIEF & CHARACTER SCENARIO:\n{song.brief}")
 
         musical_details = []
-        sound_dir = genre or style
+        sound_dir = song.genre or song.style
         if sound_dir:
             musical_details.append(f"Genre / Style: {sound_dir}")
-        if bpm:
-            pace_desc = "Slow / deliberate" if bpm < 80 else ("Moderate mid-tempo" if bpm < 115 else "Fast / driving")
-            musical_details.append(f"Pace / Tempo: {int(round(bpm))} BPM ({pace_desc})")
-        if key:
-            musical_details.append(f"Key / Scale: {key} {scale or 'major'}")
+        if song.bpm:
+            pace_desc = "Slow / deliberate" if song.bpm < 80 else ("Moderate mid-tempo" if song.bpm < 115 else "Fast / driving")
+            musical_details.append(f"Pace / Tempo: {int(round(song.bpm))} BPM ({pace_desc})")
+        if song.key:
+            musical_details.append(f"Key / Scale: {song.key} {song.scale or 'major'}")
         template_detail = None
-        if template_id and self.studio_db.is_available:
-            template_detail = self.studio_db.get_template_detail(int(template_id))
+        if song.template_id and self.studio_db.is_available:
+            template_detail = self.studio_db.get_template_detail(int(song.template_id))
 
-        resolved_tmpl_title = template_title or ((template_detail or {}).get("metadata", {}).get("title") or "")
+        resolved_tmpl_title = (template_detail or {}).get("metadata", {}).get("title") or ""
         if resolved_tmpl_title:
             musical_details.append(f"Production Template: {resolved_tmpl_title}")
 
@@ -1134,24 +1119,20 @@ class SongwriterCowriter:
 
         prompt = prompt_templates.render("storyline", {
             "context": full_context_str,
-            "bpm": int(round(bpm)) if bpm else 100,
+            "bpm": int(round(song.bpm)) if song.bpm else 100,
         })
-        story = self._chat([{"role": "user", "content": prompt}], model=model, temperature=0.75, max_tokens=250)
-        return story.strip()
+        story = self._chat([{"role": "user", "content": prompt}], model=song.model, temperature=0.75, max_tokens=250)
+        song.story = story.strip()
+        return song
 
     # ------------------------------------------------------------- interview
 
     def interview(
         self,
-        brief: str = "",
-        style: str = "",
-        template_id: int | None = None,
-        reference_song: dict[str, Any] | None = None,
-        story: str = "",
-        model: str = "",
+        song: SongGeneration,
+        *,
         use_model: bool = True,
-        genre: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> SongGeneration:
         """Ask the writer the questions a producer would ask, each with a usable default.
 
         Returns deterministic question scaffolding with defaults resolved from the
@@ -1159,15 +1140,16 @@ class SongwriterCowriter:
         the three craft questions that depend on the brief (angle, imagery, hook);
         if it fails or returns unusable output, deterministic fallbacks are used.
         """
-        model = (model or "").strip() or (self.get_default_model() if use_model else "")
-        defaults = self.resolve_defaults(style=style, template_id=template_id, genre=genre)
-        writer_genre = (genre or "").strip() or style.split(',')[0].split('(')[0].strip() or defaults["genre"]
-        reference_genre = str((reference_song or {}).get("genre") or "").strip()
+        song.model = song.model.strip() or (self.get_default_model() if use_model else "")
+        model = song.model
+        defaults = self.resolve_defaults(style=song.style, template_id=song.template_id, genre=song.genre)
+        writer_genre = (song.genre or "").strip() or song.style.split(',')[0].split('(')[0].strip() or defaults["genre"]
+        reference_genre = str((song.reference_song or {}).get("genre") or "").strip()
         defaults["genre"] = writer_genre
         genre_question = None
         if reference_genre and writer_genre.casefold() != reference_genre.casefold():
             recommendation, ai_generated = self._recommend_genre(
-                brief, story, writer_genre, reference_genre, model, use_model,
+                song.brief, song.story, writer_genre, reference_genre, model, use_model,
             )
             genre_question = {
                 "id": "genre", "category": "creative", "kind": "options",
@@ -1178,14 +1160,14 @@ class SongwriterCowriter:
                                   recommendation: "AI recommendation" if ai_generated else "Suggested blend — AI unavailable"},
                 "default": writer_genre,
             }
-        if reference_song:
-            ref_bpm = reference_song.get("tempo_bpm") or reference_song.get("bpm")
+        if song.reference_song:
+            ref_bpm = song.reference_song.get("tempo_bpm") or song.reference_song.get("bpm")
             if ref_bpm:
                 defaults["bpm"] = int(round(ref_bpm))
-            if reference_song.get("musical_key"):
-                defaults["music_key"] = reference_song.get("musical_key")
-            if reference_song.get("scale"):
-                defaults["scale"] = reference_song.get("scale")
+            if song.reference_song.get("musical_key"):
+                defaults["music_key"] = song.reference_song.get("musical_key")
+            if song.reference_song.get("scale"):
+                defaults["scale"] = song.reference_song.get("scale")
 
         bpm_default = str(defaults["bpm"])
         bpm_options = [
@@ -1196,8 +1178,8 @@ class SongwriterCowriter:
         banned_default = ", ".join(defaults["banned_words"])
 
         # Reference shape summaries for the "Follow reference" options in Step 3.
-        self.ensure_reference_schemes(reference_song)
-        ref_secs = [s for s in (reference_song or {}).get("sections") or [] if isinstance(s, dict)]
+        self.ensure_reference_schemes(song.reference_song)
+        ref_secs = [s for s in (song.reference_song or {}).get("sections") or [] if isinstance(s, dict)]
         ref_names = [str(s.get("name") or "Section") for s in ref_secs]
         has_ref = bool(ref_secs)
 
@@ -1213,9 +1195,9 @@ class SongwriterCowriter:
         ref_rhyme_opt = FOLLOW_REFERENCE + " rhyme scheme (" + _preview(
             [f"{s.get('name')}: {s.get('rhyme_scheme') or '-'}" for s in ref_secs], 3) + ")"
 
-        craft = self._craft_questions(brief, defaults, model, reference_song=reference_song, story=story) if use_model else None
+        craft = self._craft_questions(song.brief, defaults, model, reference_song=song.reference_song, story=song.story) if use_model else None
         if not craft:
-            craft = self._fallback_craft_questions(brief)
+            craft = self._fallback_craft_questions(song.brief)
         for q in craft:
             q["category"] = "creative"
 
@@ -1453,13 +1435,26 @@ class SongwriterCowriter:
         craft = [q for q in craft if q["id"] not in reserved_ids]
         questions = craft + creative_questions + production_questions
 
-        return {
-            "brief": brief,
-            "style": style,
-            "defaults": defaults,
-            "questions": questions,
-            "model_used": model if craft and use_model else None,
-        }
+        song.questions = questions
+        for q in questions:
+            qid = q.get("id")
+            if qid and qid not in song.answers and q.get("default") is not None:
+                song.answers[qid] = str(q["default"])
+
+        if "genre" not in song.model_fields_set and writer_genre:
+            song.genre = writer_genre
+        if "bpm" not in song.model_fields_set and defaults.get("bpm"):
+            song.bpm = defaults["bpm"]
+        if "key" not in song.model_fields_set and defaults.get("music_key"):
+            song.key = defaults["music_key"]
+        if "scale" not in song.model_fields_set and defaults.get("scale"):
+            song.scale = defaults["scale"]
+        if "vocal" not in song.model_fields_set and defaults.get("vocal"):
+            song.vocal = defaults["vocal"]
+        if "template_id" not in song.model_fields_set and defaults.get("template_id"):
+            song.template_id = defaults["template_id"]
+
+        return song
 
     def _recommend_genre(
         self, brief: str, story: str, writer_genre: str, reference_genre: str,
@@ -1647,106 +1642,57 @@ Respond with JSON only, no prose, in exactly this shape:
 
     # ------------------------------------------------------- prompt assembly
 
-    def build_instructions_payload(
-        self,
-        prompt: str,
-        style: str | None = None,
-        genre: str | None = None,
-        template_id: int | None = None,
-        bpm: int | None = None,
-        music_key: str | None = None,
-        scale: str | None = None,
-        vocal: str | None = None,
-        vocal_roles: dict[str, str] | None = None,
-        reference_song: dict[str, Any] | None = None,
-        banned_words: list[str] | None = None,
-        rhyme_scheme: str | None = None,
-        poetic_form: str | None = None,
-        section_plan: str | None = None,
-        syllable_target: str | None = None,
-        answers: dict[str, str] | None = None,
-        engine_target: str = "standard",
-        mode: str = "creator",
-        model: str = "",
-    ) -> dict[str, Any]:
-        """Construct the exact instruction text that will be sent to the model."""
-        model = (model or "").strip() or self.get_default_model()
-        template = None
-        if template_id and self.studio_db.is_available:
-            template = self.studio_db.get_template_detail(template_id)
+    def prepare_generation(self, song: SongGeneration) -> SongGeneration:
+        """Resolve Steps 1–3 once on this instance before a generation operation."""
+        if not song.model or not song.model.strip():
+            song.model = self.get_default_model()
+        self.ensure_reference_schemes(song.reference_song)
+        tmpl_meta: dict[str, Any] = {}
+        if song.template_id and self.studio_db.is_available:
+            tmpl = self.studio_db.get_template_detail(song.template_id)
+            if tmpl:
+                tmpl_meta = tmpl.get("metadata", {})
         elif self.studio_db.is_available:
-            rec = self.recommend_setup(style or genre or "Pop")
-            template = rec["primary_template"]
+            rec = self.recommend_setup(song.style or song.genre or "Pop")
+            tmpl = rec.get("primary_template")
+            if tmpl:
+                tmpl_meta = tmpl.get("metadata", {})
+        song.resolve_inputs(tmpl_meta)
+        return song
 
-        meta = template.get("metadata", {}) if template else {}
-        segs = template.get("segments", {}) if template else {}
-
-        bpm_hint = self._style_tokens(style or "")["bpm_hint"]
-        resolved_bpm = bpm or bpm_hint or self._clean(meta.get("bpm")) or 92
-        resolved_key = music_key or self._clean(meta.get("music_key")) or "C"
-        resolved_scale = scale or self._clean(meta.get("scale")) or "major"
-        genre_answer = (answers or {}).get("genre")
-        if isinstance(genre_answer, dict):
-            genre_answer = genre_answer.get("answer")
-        resolved_genre = genre_answer or genre or style or " / ".join(
-            p for p in (self._clean(meta.get("genre")), self._clean(meta.get("subgenre"))) if p
-        ) or "Pop"
-        # A template may be marked instrumental. Since this call produces lyrics,
-        # a singer is named instead: "instrumental" would tell the lyric model to
-        # write for no voice, and would drop the Vocal Details block from the
-        # engine prompt while the song being packaged is sung.
-        template_vocal = vocal or self._clean(meta.get("vocal")) or "melodic lead"
-        resolved_vocal = (
-            "lead vocal"
-            if str(template_vocal).strip().lower() == "instrumental"
-            else template_vocal
-        )
-        resolved_syl = syllable_target or "8-10"
-        plan_key = self._plan_key(section_plan)
-        plan = SECTION_PLANS[plan_key]
-
-        # Engine prompts are built from resolved values by the engine_prompt module,
-        # not lifted from the template row.
-        engine = self.engine_prompts(
-            spec={
-                "bpm": resolved_bpm,
-                "music_key": resolved_key,
-                "scale": resolved_scale,
-                "genre": resolved_genre,
-                "vocal": resolved_vocal,
-            },
-            segments=segs,
-            brief=prompt,
-            answers=answers,
-            model=model,
-            use_model=False,
-        )
-        yue2_style = engine["yue2"]
-        minimax_caption = engine["minimax"]
-
+    def build_instructions_payload(self, song: SongGeneration) -> SongGeneration:
+        """Construct the exact instruction text that will be sent to the model."""
+        plan_str = ", ".join(f"[{s}]" for s in song.planned_sections())
         specs: list[str] = [
             "Write production-ready song lyrics for a recording session.",
             "",
             "PRODUCTION SPECIFICATION",
-            f"- Tempo: {resolved_bpm} BPM. Hold a steady {resolved_syl} syllables per line so every line sits on the beat.",
-            f"- Key: {resolved_key} {resolved_scale}",
-            f"- Genre: {resolved_genre}",
-            f"- Vocal delivery: {resolved_vocal}",
-            f"- Section plan: {plan}",
+            f"- Tempo: {song.bpm} BPM. Hold a steady {song.syllable_min}-{song.syllable_max} syllables per line so every line sits on the beat.",
+            f"- Key: {song.key} {song.scale}",
+            f"- Genre: {song.genre}",
+            f"- Subgenre: {song.subgenre or 'none specified'}",
+            f"- Time signature: {song.time_signature}",
+            f"- Language: {song.language or 'English'}",
+            f"- Vocal delivery: {song.vocal}",
+            f"- Section plan: {plan_str}",
         ]
+        if song.moods:
+            specs.append(f"- Moods / Atmosphere: {', '.join(song.moods)}")
+        if song.instruments:
+            specs.append(f"- Instrumentation: {', '.join(song.instruments)}")
 
-        ref_title = (reference_song or {}).get("title")
-        ref_artist = (reference_song or {}).get("artist")
+        ref_title = (song.reference_song or {}).get("title")
+        ref_artist = (song.reference_song or {}).get("artist")
         if ref_title and ref_artist:
             specs.append(
                 f"- Reference song blueprint: inspired by the structural pacing and metric groove of '{ref_title}' by {ref_artist} "
-                f"(catalog genre: {reference_song.get('genre', 'unknown')}). The new song's genre remains {resolved_genre}; "
+                f"(catalog genre: {song.reference_song.get('genre', 'unknown')}). The new song's genre remains {song.genre}; "
                 "borrow structure and phrasing only. Do NOT copy any words, character names, or phrases; write original lyrics strictly for the brief."
             )
 
-        if str(resolved_vocal).strip().lower() == "duet":
-            s_a = (vocal_roles or {}).get("singer_a") or "Singer A (Male Vocal)"
-            s_b = (vocal_roles or {}).get("singer_b") or "Singer B (Female Vocal)"
+        if str(song.vocal).strip().lower() == "duet":
+            s_a = (song.vocal_roles or {}).get("singer_a") or "Singer A (Male Vocal)"
+            s_b = (song.vocal_roles or {}).get("singer_b") or "Singer B (Female Vocal)"
             specs.append(
                 f"- Duet vocal arrangement: Two-person collaboration with {s_a} and {s_b}.\n"
                 f"  * [Verse 1 - {s_a}] (Singer A solo)\n"
@@ -1755,26 +1701,15 @@ Respond with JSON only, no prose, in exactly this shape:
                 f"  * [Bridge - Call and Response] (Trading lines between {s_a} and {s_b})"
             )
 
-        if style:
-            specs.append(f"- Original style direction: {style}. Use only where compatible with the chosen genre ({resolved_genre}).")
+        if song.style:
+            specs.append(f"- Original style direction: {song.style}. Use only where compatible with the chosen genre ({song.genre}).")
 
-        # `engine["fields"]` already separated the section arc out of
-        # groove_foundation; using the raw segment here would put
-        # "Suggested arc [Intro] [Verse 1]..." in the lyric spec as a groove.
-        ef = engine["fields"]
-        if ef.get("primary_layer"):
-            specs.append(f"- Primary instrumental layer: {ef['primary_layer']}")
-        if ef.get("groove_foundation"):
-            specs.append(f"- Groove foundation: {ef['groove_foundation']}")
-        if ef.get("emotional_progression"):
-            specs.append(f"- Emotional arc: {ef['emotional_progression']}")
+        if song.rhyme_scheme and song.rhyme_scheme != "free":
+            specs.append(f"- Rhyme scheme: hold {song.rhyme_scheme.upper()} in every section")
+        if song.poetic_form:
+            specs.append(f"- Poetic form: {song.poetic_form}")
 
-        if rhyme_scheme and rhyme_scheme != "free":
-            specs.append(f"- Rhyme scheme: hold {rhyme_scheme.upper()} in every section")
-        if poetic_form:
-            specs.append(f"- Poetic form: {poetic_form}")
-
-        banned = [w.strip() for w in (banned_words or []) if w.strip()]
+        banned = [w.strip() for w in (song.banned_pairs or []) if w.strip()]
         if banned:
             specs.append(f"- Do not use these stock rhymes or phrases: {', '.join(banned)}")
 
@@ -1782,7 +1717,7 @@ Respond with JSON only, no prose, in exactly this shape:
             "",
             "CANONICAL AUDIO ENGINE SECTION TAGS (YuE2 & MiniMax 3)",
             "- Supported canonical section tags: Intro, Verse, Pre-Chorus, Chorus, Post-Chorus, Bridge, Instrumental, Solo, Outro.",
-            f"- Mark each planned section with its bracketed tag on its own line according to the section plan ({plan}).",
+            f"- Mark each planned section with its bracketed tag on its own line according to the section plan ({plan_str}).",
             "- For Post-Chorus: provide a catchy 2-4 line hook chant or vocal refrain.",
             "- For Solo or Instrumental: write a 1-line parenthetical arrangement cue (e.g. '(Guitar solo soaring with wide vibrato)').",
             "- For duets: append performer names to section tags (e.g. [Verse 1 - Singer A], [Verse 2 - Singer B], [Chorus - Duet Harmony]) and prefix trading lines with '(Singer A)' or '(Both)'.",
@@ -1794,17 +1729,17 @@ Respond with JSON only, no prose, in exactly this shape:
             "- Lyrics only, with bracketed section tags. No commentary, no titles, no syllable counts.",
         ]
 
-        if engine_target == "yue2":
+        if song.engine_target == "yue2":
             specs.append("- Target engine YuE2: section tags only, no instrumental asides.")
-        elif engine_target == "minimax":
+        elif song.engine_target == "minimax":
             specs.append("- Target engine MiniMax Music 3: bracketed arrangement cues permitted.")
 
-        if mode == "guide":
+        if song.mode == "guide":
             specs[0] = "Act as a co-writer on the brief below."
             specs[-1] = "- Give concrete line rewrites and specific rhyme options, not general advice."
 
         answer_block = ""
-        clean_answers = self._clean_answers(answers)
+        clean_answers = self._clean_answers(song.answers)
         if clean_answers:
             lines = "\n".join(
                 f"- {k.replace('_', ' ')}: {v}" for k, v in clean_answers.items()
@@ -1812,208 +1747,89 @@ Respond with JSON only, no prose, in exactly this shape:
             answer_block = f"\n\nWRITER'S DECISIONS\n{lines}"
 
         specs_text = "\n".join(specs)
-        user_content = (
-            f"{specs_text}\n\nBRIEF\n{prompt.strip() or 'An original song.'}"
-            f"{answer_block}\n\nOutput the lyrics now:"
-        )
+        user_content = f"BRIEF\n{song.brief.strip() or 'An original song.'}"
+        if song.story:
+            user_content += f"\n\nSTORY\n{song.story}"
+        user_content += f"{answer_block}\n\nOutput the lyrics now:"
 
-        metadata_payload = {
-            "bpm": resolved_bpm,
-            "key": f"{resolved_key} {resolved_scale}".strip(),
-            "music_key": resolved_key,
-            "scale": resolved_scale,
-            "genre": resolved_genre,
-            "vocal": resolved_vocal,
-            "section_plan": plan_key,
-            "syllable_target": resolved_syl,
-            "template_id": meta.get("id"),
-            "template_title": meta.get("title"),
-            "arrangement": {
-                k: v for k, v in ef.items()
-                if k in ("primary_layer", "secondary_layer", "groove_foundation",
-                         "embellishments", "instrument_lifecycle")
-            },
-            "global_metadata": {
-                k: v for k, v in ef.items()
-                if k in ("emotional_progression", "application_scenarios",
-                         "sonics_production", "basic_attributes")
-            },
-            "section_arc": engine.get("section_arc", ""),
-            "model": model,
-        }
-
-        return {
-            "system_prompt": specs_text,
-            "user_prompt": user_content,
-            "metadata": metadata_payload,
-            "yue2_style": yue2_style,
-            "minimax_caption": minimax_caption,
-            "engine_fields": ef,
-        }
+        song.system_prompt = specs_text
+        song.user_prompt = user_content
+        return song
 
     # ------------------------------------------------------------- generation
 
-    def generate(
-        self,
-        prompt: str,
-        title: str | None = None,
-        style: str | None = None,
-        genre: str | None = None,
-        template_id: int | None = None,
-        bpm: int | None = None,
-        music_key: str | None = None,
-        scale: str | None = None,
-        vocal: str | None = None,
-        vocal_roles: dict[str, str] | None = None,
-        reference_song: dict[str, Any] | None = None,
-        banned_words: list[str] | None = None,
-        rhyme_scheme: str | None = None,
-        poetic_form: str | None = None,
-        section_plan: str | None = None,
-        syllable_target: str | None = None,
-        answers: dict[str, str] | None = None,
-        engine_target: str = "standard",
-        chat_history: list[dict[str, str]] | None = None,
-        mode: str = "creator",
-        model: str = "",
-        temperature: float = 0.7,
-        top_p: float = 0.9,
-        max_tokens: int = 900,
-        section_by_section: bool = True,
-        author_engine_prompt: bool = True,
-    ) -> dict[str, Any]:
-        gen = SongGeneration.from_request(
-            template_defaults=self.resolve_defaults(style=style or genre or "", template_id=template_id),
-            model=(model or "").strip() or self.get_default_model(),
-            prompt=prompt, title=title, style=style, genre=genre, template_id=template_id,
-            bpm=bpm, music_key=music_key, scale=scale, vocal=vocal, vocal_roles=vocal_roles,
-            reference_song=reference_song, banned_words=banned_words, rhyme_scheme=rhyme_scheme,
-            section_plan=section_plan, syllable_target=syllable_target, answers=answers,
-        )
-        gen.engine_target = engine_target
-        payload_data = self.build_instructions_payload(
-            prompt=gen.brief,
-            style=style,
-            genre=gen.genre,
-            template_id=gen.template_id,
-            bpm=gen.bpm,
-            music_key=gen.key,
-            scale=gen.scale,
-            vocal=gen.vocal,
-            vocal_roles=gen.vocal_roles,
-            reference_song=gen.reference_song,
-            banned_words=gen.banned_pairs,
-            rhyme_scheme=gen.rhyme_scheme,
-            poetic_form=poetic_form,
-            section_plan=section_plan,
-            syllable_target=f"{gen.syllable_min}-{gen.syllable_max}",
-            answers=answers,
-            engine_target=engine_target,
-            mode=mode,
-            model=gen.model,
-        )
-        gen.story = self.author_story(
-            gen.brief, title=gen.title, style=gen.style or gen.genre, genre=gen.genre,
-            bpm=gen.bpm, key=gen.key, scale=gen.scale, model=gen.model,
-        )
-        spec = {
-            "bpm": gen.bpm, "music_key": gen.key, "scale": gen.scale, "genre": gen.genre,
-            "subgenre": gen.subgenre, "vocal": gen.vocal, "style": gen.style or gen.genre,
-            "story": gen.story, "title": gen.title, "allow_slang": gen.allow_slang,
-            "allow_offensive": gen.allow_offensive, "allow_phrases": gen.allow_phrases,
-        }
-        plan = ", ".join(f"[{n}]" for n in gen.planned_sections())
+    def generate(self, song: SongGeneration) -> SongGeneration:
+        """Generate production-ready lyrics & engine packages for a song."""
+        self.prepare_generation(song)
+        song.start_draft()
+        if not song.story:
+            self.author_story(song)
 
-        song = None
-        draft: dict[str, Any] | None = None
-        if section_by_section and mode != "guide" and not chat_history:
-            # Drafting per section is what makes the deterministic checks usable:
-            # a measured issue can be fed back against the lines that caused it.
-            drafter = SectionDrafter(self.workbench, chat=self._chat)
-            song = drafter.draft_song(
-                brief=gen.brief,
-                spec=spec,
-                plan=plan,
-                answers=gen.answers,
-                banned_words=gen.banned_pairs,
-                rhyme_scheme=gen.rhyme_scheme,
-                vocal=gen.vocal,
-                vocal_roles=gen.vocal_roles,
-                reference_song=gen.reference_song,
-                story=gen.story,
-                syllable_target=f"{gen.syllable_min}-{gen.syllable_max}",
-                model=gen.model,
-            )
-            clean_lyrics = self._clean_lyrics(song.lyrics)
-            draft = song.to_dict()
-            gen.sections = [
-                {"name": sec["name"], "kind": sec.get("kind", "verse"), "lines": list(sec.get("lines") or []),
-                 "performer": sec.get("performer", "")}
-                for sec in draft.get("sections", [])
-            ]
+        if song.section_by_section and song.mode != "guide" and not song.chat_history:
+            SectionDrafter(self.workbench, chat=self._chat).draft_song(song)
         else:
+            self.build_instructions_payload(song)
             messages: list[dict[str, str]] = []
-            for msg in (chat_history or [])[-6:]:
+            messages.append({"role": "system", "content": song.system_prompt})
+            for msg in (song.chat_history or [])[-6:]:
                 if msg.get("role") in ("user", "assistant") and msg.get("content"):
                     messages.append({"role": msg["role"], "content": msg["content"]})
-            messages.append({"role": "user", "content": payload_data["user_prompt"]})
+            messages.append({"role": "user", "content": song.user_prompt})
             raw_text = self._chat(
-                messages, model=gen.model, temperature=temperature, top_p=top_p,
-                max_tokens=max_tokens,
+                messages, model=song.model, temperature=song.temperature, top_p=song.top_p,
+                max_tokens=song.max_tokens,
             )
             clean_lyrics = self._clean_lyrics(raw_text)
-            gen.sections = self._sections_from_lyrics(clean_lyrics)
+            song.sections = self._sections_from_lyrics(clean_lyrics)
 
-        # The engine prompt is the other half of the deliverable, so the model
-        # authors it from the same brief and decisions that produced the lyrics.
-        engine = self.engine_prompts(
-            spec=spec,
-            segments=self._template_segments(gen.template_id),
-            brief=gen.brief,
-            answers=gen.answers,
-            model=gen.model,
-            use_model=author_engine_prompt,
+        # Author engine prompts on this song instance
+        EnginePromptBuilder(chat=self._chat).build(
+            song=song,
+            segments=self._template_segments(song.template_id),
+            use_model=song.author_engine_prompt,
         )
-        gen.engine_prompts = {
-            "yue2": engine["yue2"],
-            "minimax": engine["minimax"],
-            "songbench": engine.get("songbench") or "",
-        }
-        # ABC scores come only from imported MIDI, never fabricated from lyrics.
-        self.song_store.save(gen)
 
-        ep = gen.engine_prompts
-        yue2_lyrics = format_lyrics_for_engine(clean_lyrics, "yue2")
-        minimax_lyrics = format_lyrics_for_engine(clean_lyrics, "minimax")
-        return {
-            "song_id": gen.song_id,
-            "revision": gen.revision,
-            "lyrics": clean_lyrics,
-            "system_prompt": payload_data["system_prompt"],
-            "user_prompt": payload_data["user_prompt"],
-            "metadata": payload_data["metadata"],
-            "generation": gen.to_record(),
-            "model_used": gen.model,
-            "engine_target": gen.engine_target,
-            "story_treatment": gen.story,
-            "rhyme_api_audit": [call for sec in getattr(song, "sections", []) for call in getattr(sec, "rhyme_api_calls", [])] if song else [],
-            "draft": draft,
-            "abc_score": gen.abc_score,
-            "engine_prompt": {
-                "yue2": ep["yue2"],
-                "minimax": ep["minimax"],
-                "songbench": ep["songbench"],
-                "authored_by": engine["authored_by"],
-                "fields": engine["fields"],
-            },
-            "yue2_package": {"style": ep["yue2"], "lyrics": yue2_lyrics, "abc": gen.abc_score, "cot": "full"},
-            "minimax_package": {"caption": ep["minimax"], "lyrics": minimax_lyrics},
-            "songbench_package": {"prompt": ep["songbench"], "lyrics": clean_lyrics},
-            "formatted_yue2": f"{ep['yue2']}\n\n{yue2_lyrics}" + (f"\n\n--- ABC SCORE ---\n{gen.abc_score}" if gen.abc_score else ""),
-            "formatted_minimax": f"{ep['minimax']}\n\n{minimax_lyrics}",
-            "formatted_songbench": f"{ep['songbench']}\n\n{clean_lyrics}",
-        }
+        # Advisory whole-song craft check
+        seen: set[str] = set()
+        clean_lines: list[str] = []
+        for raw in song.lyrics.splitlines():
+            line = raw.strip()
+            if not line or line.startswith(("[", "<|", "(")):
+                continue
+            low = line.lower()
+            if low in seen:
+                continue
+            seen.add(low)
+            clean_lines.append(line)
+        check = None
+        if clean_lines:
+            try:
+                check_res = self.workbench.check_draft(
+                    clean_lines, kind="verse", target_syllables=f"{song.syllable_min}-{song.syllable_max}"
+                )
+                check = {
+                    "line_count": check_res.line_count,
+                    "rhyme_scheme": check_res.rhyme_scheme,
+                    "rhyme_density": check_res.rhyme_density,
+                    "metric_consistency": check_res.metric_consistency,
+                    "contour": check_res.contour,
+                    "issues": check_res.issues,
+                    "mean_concreteness": check_res.mean_concreteness,
+                    "dominant_modality": check_res.dominant_modality,
+                    "valence": check_res.valence,
+                    "arousal": check_res.arousal,
+                    "dominant_emotion": check_res.dominant_emotion,
+                    "sensory_anchors": check_res.sensory_anchors,
+                }
+            except Exception:
+                check = None
+        if check is not None:
+            song.analytics["craft_check"] = check
 
+        if song.status == "draft":
+            song.status = "incomplete" if song.diagnostics.get("final_issues") else "finalized"
+        self.song_store.save(song)
+        return song
     @staticmethod
     def _sections_from_lyrics(lyrics: str) -> list[dict[str, Any]]:
         """Split bracket-tagged lyric text into {name, kind, lines} sections."""
@@ -2408,52 +2224,17 @@ Respond with JSON only, no prose, in exactly this shape:
 
     def stream_song_interactive(
         self,
-        prompt: str = "An original song",
-        title: str | None = None,
-        style: str | None = None,
-        genre: str | None = None,
-        template_id: int | None = None,
-        bpm: int | None = None,
-        music_key: str | None = None,
-        scale: str | None = None,
-        vocal: str | None = None,
-        vocal_roles: dict[str, str] | None = None,
-        reference_song: dict[str, Any] | None = None,
-        banned_words: list[str] | None = None,
-        rhyme_scheme: str | None = None,
-        section_plan: str | None = None,
-        syllable_target: str | None = None,
-        answers: dict[str, str] | None = None,
-        questions: list[dict[str, Any]] | None = None,
-        story: str | None = None,
-        model: str = "",
-        max_retries: int = 5,
-        max_sections: int | None = 5,
-        song_id: str | None = None,
-    ) -> dict[str, Any]:
+        song: SongGeneration,
+    ):
         """Draft a complete song line-by-line using a conversational critique loop.
 
         Logs each prompt sent, LLM response, validation scansion issues, and RhymeDB injections.
         """
-        self.ensure_reference_schemes(reference_song)
-        gen = SongGeneration.from_request(
-            template_defaults=self.resolve_defaults(style=style or genre or "", template_id=template_id),
-            model=(model or "").strip() or self.get_default_model(),
-            prompt=prompt, title=title, style=style, genre=genre, template_id=template_id,
-            bpm=bpm, music_key=music_key, scale=scale, vocal=vocal, vocal_roles=vocal_roles,
-            reference_song=reference_song, banned_words=banned_words, rhyme_scheme=rhyme_scheme,
-            section_plan=section_plan, syllable_target=syllable_target, answers=answers,
-            questions=questions, story=story, max_retries=max_retries, max_sections=max_sections,
-        )
-        # Reopened from Saved Songs: regenerating saves a new revision of the same song.
-        gen.song_id = (song_id or "").strip()
+        gen = self.prepare_generation(song)
+        gen.start_draft()
         if not gen.story:
-            gen.story = self.author_story(
-                gen.brief, title=gen.title, style=gen.style or gen.genre, genre=gen.genre,
-                bpm=gen.bpm, key=gen.key, scale=gen.scale, model=gen.model,
-            )
+            self.author_story(gen)
         rhyme_svc = RhymeService(self.workbench)
-        turns: list[dict[str, Any]] = []
         all_lines: list[str] = []
         sections_out: list[dict[str, Any]] = []
         incomplete_sections: list[dict[str, Any]] = []  # sections short of their planned line count
@@ -2535,6 +2316,9 @@ Respond with JSON only, no prose, in exactly this shape:
             return prompt_templates.render("song_context", {
                 "title": gen.title,
                 "genre": gen.genre,
+                "language": gen.language or "English",
+                "moods": ", ".join(gen.moods) if gen.moods else "none specified",
+                "instruments": ", ".join(gen.instruments) if gen.instruments else "none specified",
                 "story": f"{gen.story}{ref_str}{decisions_str}",
                 "section_map": sections_map,
                 "bpm": gen.bpm,
@@ -3169,7 +2953,7 @@ Respond with JSON only, no prose, in exactly this shape:
                             "attempt": attempt,
                             "critique": critique_data,
                         }
-                    turns.append({
+                    gen.turns.append({
                         "turn_id": turn_id,
                         "section": sec_name,
                         "performer": performer,
@@ -3245,32 +3029,8 @@ Respond with JSON only, no prose, in exactly this shape:
                 "performer": performer,
             })
 
-        gen.sections = [
-            {"name": s["name"], "kind": s.get("kind", "verse"), "lines": list(s["lines"]), "performer": s.get("performer", "")}
-            for s in sections_out
-        ]
-        clean_lyrics = gen.lyrics
-        # ABC scores come only from imported MIDI, never fabricated from lyrics.
-        template_segments = None
-        if gen.template_id and self.studio_db.is_available:
-            tmpl_detail = self.studio_db.get_template_detail(gen.template_id)
-            if tmpl_detail:
-                template_segments = tmpl_detail.get("segments")
-
-        prompt_pkgs = EnginePromptBuilder(chat=self._chat).build(
-            spec={"genre": gen.genre, "subgenre": gen.subgenre, "bpm": gen.bpm, "music_key": gen.key,
-                  "scale": gen.scale, "vocal": gen.vocal, "template_id": gen.template_id,
-                  "style": gen.style, "story": gen.story, "title": gen.title},
-            brief=gen.brief,
-            answers=gen.answers,
-            model=gen.model,
-            use_model=False,
-        )
-        gen.engine_prompts = {
-            "minimax": prompt_pkgs.get("minimax") or f"[Global Metadata]\nbpm is {gen.bpm}. key is {gen.key}, and scale is {gen.scale}. {gen.genre}.",
-            "yue2": prompt_pkgs.get("yue2") or f"{gen.genre}, {gen.vocal}, {gen.bpm} BPM",
-            "songbench": prompt_pkgs.get("songbench") or f"{gen.genre} song, {gen.vocal}, {gen.bpm} BPM, {gen.key} {gen.scale}",
-        }
+        gen.sections = list(sections_out)
+        gen.incomplete_sections = list(incomplete_sections)
         gen.analytics = {
             "avg_syllables_per_line": live_avg_syl,
             "avg_stressed_beats_per_line": live_avg_beats,
@@ -3278,51 +3038,25 @@ Respond with JSON only, no prose, in exactly this shape:
             "ttr_vocabulary_diversity": live_ttr,
             "total_lines": len(all_lines),
         }
-        # Only a song whose every planned section reached its line count is
-        # "finalized"; otherwise it is "incomplete" so the record and the UI show
-        # the gap instead of presenting a short song as finished.
         gen.status = "incomplete" if incomplete_sections else "finalized"
+
+        EnginePromptBuilder(chat=self._chat).build(
+            song=gen,
+            segments=self._template_segments(gen.template_id),
+            use_model=gen.author_engine_prompt,
+        )
         self.song_store.save(gen)
 
-        ep = gen.engine_prompts
         yield {
             "type": "complete",
-            "song_id": gen.song_id,
-            "revision": gen.revision,
-            "lyrics": clean_lyrics,
-            "sections": sections_out,
-            "incomplete_sections": incomplete_sections,
-            "status": gen.status,
-            "turns": turns,
-            "abc_score": gen.abc_score,
-            "analytics": gen.analytics,
-            "formatted_minimax": f"{ep['minimax']}\n\n{clean_lyrics}",
-            "formatted_yue2": f"{ep['yue2']}\n\n{clean_lyrics}" + (f"\n\n--- ABC SCORE ---\n{gen.abc_score}" if gen.abc_score else ""),
-            "formatted_songbench": f"{ep['songbench']}\n\n{clean_lyrics}",
-            "generation": gen.to_record(),
-            "metadata": {
-                "bpm": gen.bpm,
-                "key": gen.key,
-                "scale": gen.scale,
-                "genre": gen.genre,
-                "vocal": gen.vocal,
-                "story": gen.story,
-                "stressed_beats_per_line": gen.analytics["avg_stressed_beats_per_line"],
-            },
+            "song": gen.model_dump(mode="json"),
         }
 
-    def draft_song_interactive(self, **kwargs) -> dict[str, Any]:
+    def draft_song_interactive(self, song: SongGeneration) -> SongGeneration:
         """Batch wrapper over stream_song_interactive."""
-        final_payload: dict[str, Any] = {}
-        turns: list[dict[str, Any]] = []
-        for ev in self.stream_song_interactive(**kwargs):
-            if ev.get("type") in ("prompt", "response", "validation"):
-                turns.append(ev)
-            elif ev.get("type") == "complete":
-                final_payload = ev
-        if "turns" not in final_payload:
-            final_payload["turns"] = turns
-        return final_payload
+        for ev in self.stream_song_interactive(song):
+            pass
+        return song
 
     # --------------------------------------------------------- song library
 
@@ -3336,7 +3070,7 @@ Respond with JSON only, no prose, in exactly this shape:
         """The exact SongGeneration that was saved, for repopulating Steps 1-4."""
         return self.song_store.load(song_id)
 
-    def list_revisions(self, song_id: str) -> list[dict[str, Any]]:
+    def list_revisions(self, song_id: str) -> list[SongGeneration]:
         return self.song_store.revisions(song_id)
 
     def load_revision(self, song_id: str, revision: int) -> SongGeneration | None:
@@ -3351,15 +3085,11 @@ Respond with JSON only, no prose, in exactly this shape:
         sort_order: str = "desc",
         limit: int = 100,
         offset: int = 0,
-    ) -> list[dict[str, Any]]:
+    ) -> list[SongGeneration]:
         return self.song_store.list(
             status=status, genre=genre, query=query, sort_by=sort_by,
             sort_order=sort_order, limit=limit, offset=offset,
         )
-
-    def get_crafted_song(self, song_id: str) -> dict[str, Any] | None:
-        return self.song_store.detail(song_id)
-
     def delete_crafted_songs(self, song_ids: list[str]) -> int:
         return self.song_store.delete(song_ids)
 
@@ -3474,23 +3204,6 @@ Respond with JSON only, no prose, in exactly this shape:
 
     # ---------------------------------------------------- human turn-by-turn
 
-    def _build_gen(self, **req: Any) -> "SongGeneration":
-        """Rebuild the generation from request fields (shared by turn endpoints)."""
-        self.ensure_reference_schemes(req.get("reference_song"))
-        return SongGeneration.from_request(
-            template_defaults=self.resolve_defaults(
-                style=req.get("style") or req.get("genre") or "", template_id=req.get("template_id")),
-            model=(req.get("model") or "").strip() or self.get_default_model(),
-            prompt=req.get("prompt") or "", title=req.get("title"), style=req.get("style"),
-            genre=req.get("genre"), template_id=req.get("template_id"),
-            bpm=req.get("bpm"), music_key=req.get("music_key"), scale=req.get("scale"),
-            vocal=req.get("vocal"), vocal_roles=req.get("vocal_roles"),
-            reference_song=req.get("reference_song"), banned_words=req.get("banned_words"),
-            rhyme_scheme=req.get("rhyme_scheme"), section_plan=req.get("section_plan"),
-            syllable_target=req.get("syllable_target"), answers=req.get("answers"),
-            questions=req.get("questions"), story=req.get("story"),
-            max_retries=req.get("max_retries") or 5, max_sections=req.get("max_sections"),
-        )
 
     def _plan_turns(self, gen: "SongGeneration") -> list[dict[str, Any]]:
         """The ordered list of turns (section + line block) for this generation.
@@ -3511,9 +3224,14 @@ Respond with JSON only, no prose, in exactly this shape:
                 turns.append({"section": sec_name, "block": block, "repeat_chorus": False})
         return turns
 
-    def draft_turn(self, accepted: list[dict[str, Any]] | None = None,
-                   reject_reason: str = "", rejections: list[dict[str, Any]] | None = None,
-                   **req: Any) -> dict[str, Any]:
+    def draft_turn(
+        self,
+        song: SongGeneration,
+        *,
+        accepted: list[dict[str, Any]] | None = None,
+        reject_reason: str = "",
+        rejections: list[dict[str, Any]] | None = None,
+    ) -> SongGeneration:
         """Draft the next block of lines, given the turns accepted so far.
 
         ``accepted`` is a list of {"section", "lines": [...]} already committed by
@@ -3521,7 +3239,28 @@ Respond with JSON only, no prose, in exactly this shape:
         scansion for human review -- or {"done": True} when the song is complete.
         A ``reject_reason`` is fed back to the model as the writer's critique.
         """
-        gen = self._build_gen(**req)
+        if song.status != "draft" or (not song.turns and not accepted):
+            song.start_draft()
+        self.prepare_generation(song)
+        turn = self._draft_turn_data(
+            song, accepted=accepted, reject_reason=reject_reason, rejections=rejections,
+        )
+        turn["type"] = "human_turn"
+        if reject_reason:
+            turn["feedback"] = reject_reason
+        if rejections:
+            turn["rejections"] = rejections
+        song.turns.append(turn)
+        return song
+
+    def _draft_turn_data(
+        self,
+        gen: SongGeneration,
+        *,
+        accepted: list[dict[str, Any]] | None = None,
+        reject_reason: str = "",
+        rejections: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         accepted = accepted or []
         turn_plan = self._plan_turns(gen)
         turn_index = len(accepted)
@@ -3769,8 +3508,12 @@ Respond with JSON only, no prose, in exactly this shape:
         else:
             feedback = ""
 
+        lang_line = f"  Language: {gen.language or 'English'}.\n"
+        moods_line = f"  Moods: {', '.join(gen.moods)}.\n" if gen.moods else ""
+        inst_line = f"  Instruments: {', '.join(gen.instruments)}.\n" if gen.instruments else ""
         return (
-            f"You are co-writing \"{gen.title}\" ({gen.genre}).\n\n"
+            f"You are co-writing \"{gen.title}\" ({gen.genre}).\n"
+            f"{lang_line}{moods_line}{inst_line}\n"
             f"CONTEXT SO FAR:\n{context}\n\n"
             f"{tone_line}{ban_line}"
             f"{prompt_templates.line_rules_text()}\n"
@@ -3782,10 +3525,15 @@ Respond with JSON only, no prose, in exactly this shape:
             f"  Output ONLY the {count} labelled line(s), one per row (e.g. 'L{block[0]}: ...'). No commentary, no markdown."
         )
 
-    def finalize_turns(self, accepted: list[dict[str, Any]] | None = None, **req: Any) -> dict[str, Any]:
+    def finalize_turns(
+        self,
+        song: SongGeneration,
+        *,
+        accepted: list[dict[str, Any]] | None = None,
+    ) -> SongGeneration:
         """Assemble human-accepted turns into a saved SongGeneration + engine prompts."""
-        gen = self._build_gen(**req)
-        gen.song_id = (req.get("song_id") or "").strip()
+        self.prepare_generation(song)
+
         # Merge accepted turns into sections (consecutive same-section blocks join).
         sections: list[dict[str, Any]] = []
         for a in (accepted or []):
@@ -3794,34 +3542,22 @@ Respond with JSON only, no prose, in exactly this shape:
             if sections and sections[-1]["name"] == name:
                 sections[-1]["lines"].extend(lines)
             else:
-                sections.append({"name": name, "kind": name.lower().strip(), "lines": list(lines),
-                                 "performer": gen.vocal})
-        gen.sections = sections
-        prompt_pkgs = EnginePromptBuilder(chat=self._chat).build(
-            spec={"genre": gen.genre, "subgenre": gen.subgenre, "bpm": gen.bpm, "music_key": gen.key,
-                  "scale": gen.scale, "vocal": gen.vocal, "template_id": gen.template_id,
-                  "style": gen.style, "story": gen.story, "title": gen.title},
-            brief=gen.brief, answers=gen.answers, model=gen.model, use_model=False,
+                sections.append({
+                    "name": name,
+                    "kind": name.lower().strip(),
+                    "lines": list(lines),
+                    "performer": song.vocal,
+                })
+        song.sections = sections
+
+        EnginePromptBuilder(chat=self._chat).build(
+            song=song,
+            segments=self._template_segments(song.template_id),
+            use_model=song.author_engine_prompt,
         )
-        gen.engine_prompts = {
-            "minimax": prompt_pkgs.get("minimax") or f"[Global Metadata]\nbpm is {gen.bpm}. key is {gen.key}, and scale is {gen.scale}. {gen.genre}.",
-            "yue2": prompt_pkgs.get("yue2") or f"{gen.genre}, {gen.vocal}, {gen.bpm} BPM",
-            "songbench": prompt_pkgs.get("songbench") or f"{gen.genre} song, {gen.vocal}, {gen.bpm} BPM, {gen.key} {gen.scale}",
-        }
-        gen.status = "finalized"
-        self.song_store.save(gen)
-        ep = gen.engine_prompts
-        clean_lyrics = gen.lyrics
-        return {
-            "song_id": gen.song_id, "revision": gen.revision, "lyrics": clean_lyrics,
-            "sections": sections, "abc_score": gen.abc_score,
-            "formatted_minimax": f"{ep['minimax']}\n\n{clean_lyrics}",
-            "formatted_yue2": f"{ep['yue2']}\n\n{clean_lyrics}" + (f"\n\n--- ABC SCORE ---\n{gen.abc_score}" if gen.abc_score else ""),
-            "formatted_songbench": f"{ep['songbench']}\n\n{clean_lyrics}",
-            "generation": gen.to_record(),
-            "metadata": {"bpm": gen.bpm, "key": gen.key, "scale": gen.scale,
-                         "genre": gen.genre, "vocal": gen.vocal, "story": gen.story},
-        }
+        song.status = "finalized"
+        self.song_store.save(song)
+        return song
 
     @staticmethod
     def _clean_lyrics(text: str) -> str:

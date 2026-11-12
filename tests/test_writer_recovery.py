@@ -12,14 +12,24 @@ from __future__ import annotations
 import pytest
 
 from songwriter.ai.cowriter import SongwriterCowriter
+from songwriter.ai.generation import SongGeneration
 
 # One 2-line AABB verse: a single writer turn. No validation_mode key means the
 # default auto_llm path (writer + critic); cut-off recovery is mode-independent.
-_LOVE = dict(
-    prompt="love", story="Giving everything to a love that keeps hurting me.", model="test-model",
-    section_plan="[Verse 1]", syllable_target="3-6", rhyme_scheme="AABB", max_sections=1,
-    answers={"section_lines": "2 lines per section"},
-)
+def _make_love_song(max_retries: int = 5) -> SongGeneration:
+    return SongGeneration(
+        brief="love",
+        story="Giving everything to a love that keeps hurting me.",
+        model="test-model",
+        section_plan=["Verse 1"],
+        syllable_min=3,
+        syllable_max=6,
+        rhyme_scheme="AABB",
+        max_sections=1,
+        max_retries=max_retries,
+        author_engine_prompt=False,
+        answers={"section_lines": "2 lines per section"},
+    )
 
 @pytest.fixture(scope="module")
 def cowriter() -> SongwriterCowriter:
@@ -74,7 +84,7 @@ def test_cut_off_reply_is_retried_with_a_bigger_budget(
         return text
 
     monkeypatch.setattr(cowriter, "_chat", chat)
-    events = list(cowriter.stream_song_interactive(max_retries=1, **_LOVE))
+    events = list(cowriter.stream_song_interactive(_make_love_song(1)))
 
     # The second writer call used a larger budget than the first, in one attempt.
     assert len(budgets) >= 2 and budgets[1] > budgets[0]
@@ -106,7 +116,7 @@ def test_full_count_but_truncated_reply_is_retried_not_accepted(
         return text
 
     monkeypatch.setattr(cowriter, "_chat", chat)
-    events = list(cowriter.stream_song_interactive(max_retries=1, **_LOVE))
+    events = list(cowriter.stream_song_interactive(_make_love_song(1)))
 
     assert len(budgets) >= 2 and budgets[1] > budgets[0]
     assert [e["line"] for e in events if e.get("type") == "line_accepted"] == ["Take my heart", "Break me apart"]
@@ -125,7 +135,7 @@ def test_all_empty_replies_flag_the_section_cut_off(
         return "Line"
 
     monkeypatch.setattr(cowriter, "_chat", chat)
-    events = list(cowriter.stream_song_interactive(max_retries=1, **_LOVE))
+    events = list(cowriter.stream_song_interactive(_make_love_song(1)))
 
     resp = next(e for e in events if e.get("type") == "response")
     assert resp["cut_off"] is True
@@ -150,11 +160,11 @@ def test_exhausted_cut_off_finalizes_the_song_as_incomplete(
     saved: list[object] = []
     monkeypatch.setattr(cowriter, "_chat", chat)
     monkeypatch.setattr(cowriter.song_store, "save", lambda gen: saved.append(gen) or gen)
-    events = list(cowriter.stream_song_interactive(max_retries=2, **_LOVE))
+    events = list(cowriter.stream_song_interactive(_make_love_song(2)))
 
     incomplete = [e for e in events if e.get("type") == "section_incomplete"]
     assert incomplete and incomplete[0]["have"] < incomplete[0]["planned"]
     done = next(e for e in events if e.get("type") == "complete")
-    assert done["status"] == "incomplete"
-    assert done["incomplete_sections"] and done["incomplete_sections"][0]["name"] == "Verse 1"
+    assert done["song"]["status"] == "incomplete"
+    assert done["song"]["incomplete_sections"] and done["song"]["incomplete_sections"][0]["name"] == "Verse 1"
     assert saved and saved[-1].status == "incomplete"

@@ -27,19 +27,12 @@ from typing import Any, Literal
 
 import duckdb
 
-from songwriter.ai.song_store import ensure_schema
+from songwriter.ai.generation import SongGeneration
+from songwriter.ai.song_store import SongStore, _SONG_COLUMNS, ensure_schema
 from songwriter.db import workbench_db
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status as http_status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
-
-from songwriter.music.engine_prompt import (
-    basic_attributes,
-    format_lyrics_for_engine,
-    render_minimax,
-    render_songbench,
-    render_yue2,
-)
 
 from songwriter import config
 router = APIRouter(prefix="/v1", tags=["MusicStudio Integration"])
@@ -204,81 +197,9 @@ def to_utc_iso(dt: Any) -> str:
 # Pydantic Schemas matching contract
 # ===========================================================================
 
-class SongListItem(BaseModel):
-    id: str
-    revision: int
-    title: str
-    summary: str
-    genre: str
-    subgenre: str
-    language: str = "English"
-    instrumental: bool
-    duration_hint_sec: int | None = None
-    bpm: int | None = None
-    key: str | None = None
-    scale: str | None = None
-    time_signature: str = "4/4"
-    has_abc: bool = False
-    status: str = "ready"
-    updated_at: str
-    take_id: str = ""
-    # Takes: a song is a creative work; takes are its generated versions. take_group is a
-    # stable id shared by all takes of one song; take_number is 1..N within the group;
-    # take_count is the group size. A standalone song is group-of-one (take_number 1,
-    # take_count 1, take_group == id).
-    take_group: str = ""
-    take_number: int = 1
-    take_count: int = 1
-
 class SongListResponse(BaseModel):
-    songs: list[SongListItem]
+    songs: list[SongGeneration]
     next_cursor: str | None = None
-
-
-class CreativeContent(BaseModel):
-    caption: str
-    lyrics: str
-    instrumental: bool
-    language: str = "English"
-    genre: str
-    subgenre: str
-    moods: list[str] = Field(default_factory=list)
-    instruments: list[str] = Field(default_factory=list)
-    bpm: int
-    key: str
-    scale: str
-    time_signature: str = "4/4"
-    vocal_style: str = ""
-    duration_hint_sec: int | None = None
-
-
-class MinimaxModelInput(BaseModel):
-    caption: str
-    lyrics: str
-
-
-class Yue2ModelInput(BaseModel):
-    style: str
-    lyrics: str
-    abc_score: str | None = None
-
-
-class ModelInputs(BaseModel):
-    minimax: MinimaxModelInput
-    yue2: Yue2ModelInput
-
-
-class SongDetailResponse(BaseModel):
-    id: str
-    revision: int
-    title: str
-    summary: str
-    status: str
-    creative: CreativeContent
-    model_inputs: ModelInputs
-    created_at: str
-    updated_at: str
-
 
 class UploadRequest(BaseModel):
     song_revision: int
@@ -412,83 +333,15 @@ def decode_cursor(cursor_str: str) -> tuple[datetime, str] | None:
         return None
 
 
-def is_instrumental(vocal_style: str, prompt: str = "") -> bool:
-    low_v = (vocal_style or "").lower()
-    low_p = (prompt or "").lower()
-    if "instrumental" in low_v or "no lead vocal" in low_v or "no vocal" in low_v or low_v == "none":
-        return True
-    if "instrumental" in low_p and "vocal" not in low_p:
-        return True
+def _matches_etag(if_none_match: str | None, etag: str) -> bool:
+    if not if_none_match:
+        return False
+    target = etag.strip().removeprefix("W/").strip('"')
+    for candidate in if_none_match.split(","):
+        cleaned = candidate.strip().removeprefix("W/").strip('"')
+        if cleaned == "*" or cleaned == target:
+            return True
     return False
-
-
-def estimate_duration_sec(lyrics: str, bpm: float) -> int:
-    if not lyrics:
-        return 180
-    lines = [l.strip() for l in lyrics.splitlines() if l.strip() and not l.startswith("[")]
-    word_count = sum(len(l.split()) for l in lines)
-    if word_count == 0:
-        return 180
-    seconds = int(word_count / 2.5) + 30
-    return max(60, min(360, seconds))
-
-
-def build_model_prompts(
-    song_dict: dict[str, Any],
-) -> tuple[str, str, str, str, str]:
-    """Generates minimax caption/lyrics, yue2 style/lyrics, and abc score."""
-    lyrics = song_dict.get("lyrics") or ""
-    genre = song_dict.get("genre") or "Pop"
-    subgenre = song_dict.get("subgenre") or ""
-    vocal = song_dict.get("vocal_style") or "melodic lead"
-    bpm = int(round(song_dict.get("tempo_bpm") or 118))
-    key = song_dict.get("musical_key") or "C"
-    scale = song_dict.get("scale") or "major"
-    style_prompt = song_dict.get("style_prompt") or ""
-    title = song_dict.get("title") or "Untitled Song"
-
-    instrumental = is_instrumental(vocal, style_prompt)
-
-    # 1. MiniMax lyrics & caption
-    minimax_lyrics = format_lyrics_for_engine(lyrics, "minimax")
-    g_full = genre if not subgenre else f"{genre} ({subgenre})"
-    
-    # Priority 1: Check if the full rich 3-tier MiniMax caption was already generated & stored with the song
-    stored_caption = song_dict.get("engine_prompt") or ""
-    if stored_caption and "[Global Metadata]" in stored_caption or ("Global Metadata" in stored_caption and "Vocal Details" in stored_caption and "Arrangement" in stored_caption):
-        minimax_caption = stored_caption
-    else:
-        # Priority 2: Use EnginePromptBuilder with augmentation to construct full 3-tier MiniMax specification
-        from songwriter.music.engine_prompt import EnginePromptBuilder
-        builder = EnginePromptBuilder(chat=None)
-        spec = {
-            "genre": g_full,
-            "bpm": bpm,
-            "music_key": key,
-            "scale": scale,
-            "vocal": vocal if not instrumental else "instrumental"
-        }
-        built = builder.build(spec=spec, brief=title, use_model=False)
-        minimax_caption = built.get("minimax") or ""
-    # 2. YuE2 style & lyrics
-    yue2_lyrics = format_lyrics_for_engine(lyrics, "yue2")
-    # YuE2 style. Genre/subgenre are authoritative structured values, passed as
-    # `protected` so a multi-word genre is never dropped by the prose-tag filter.
-    tags = ["English"]
-    if instrumental:
-        tags.append("instrumental")
-    else:
-        tags.append(f"{vocal} vocals")
-    if style_prompt:
-        tags.append(style_prompt)
-    protected = [genre] + ([subgenre] if subgenre else [])
-    yue2_style = render_yue2(tags, bpm, protected=protected)
-
-    # 3. ABC score — only real, imported-from-MIDI scores; never fabricated.
-    abc_score = song_dict.get("abc_score") or ""
-
-    return minimax_caption, minimax_lyrics, yue2_style, yue2_lyrics, abc_score
-
 
 # ===========================================================================
 # Endpoints
@@ -504,7 +357,7 @@ def health_check() -> dict[str, Any]:
     return {
         "status": "healthy",
         "version": "1.2.0",
-        "contract_version": 5,
+        "contract_version": 6,
         "total_songs": cnt,
         "storage": {
             "data_dir": str(config.DATA_DIR),
@@ -525,122 +378,72 @@ def list_songs(
     q: str | None = Query(None, description="Search query across title, brief, lyrics"),
     limit: int = Query(50, ge=1, le=100, description="Max songs to return"),
     cursor: str | None = Query(None, description="Opaque pagination cursor"),
-    all_revisions: bool = Query(False, description="Deprecated/no-op: takes are grouped via take_group in the default list"),
     _token: str = Depends(require_auth),
 ) -> Any:
-    con = get_db_read()
-    try:
-        clauses = []
-        params: list[Any] = []
+    store = SongStore()
+    clauses: list[str] = []
+    params: list[Any] = []
 
-        if status_filter == "ready":
-            clauses.append("status IN ('ready', 'finalized')")
-        elif status_filter != "all":
-            clauses.append("status = ?")
-            params.append(status_filter)
+    if status_filter == "ready":
+        clauses.append("s.status IN ('ready', 'finalized')")
+    elif status_filter != "all":
+        clauses.append("s.status = ?")
+        params.append(status_filter)
 
-        if genre:
-            clauses.append("genre ILIKE ?")
-            params.append(f"%{genre}%")
+    if genre:
+        clauses.append("s.genre ILIKE ?")
+        params.append(f"%{genre}%")
 
-        if q:
-            clauses.append("(title ILIKE ? OR brief ILIKE ? OR lyrics ILIKE ?)")
-            wild = f"%{q}%"
-            params.extend([wild, wild, wild])
+    if q:
+        clauses.append("(s.title ILIKE ? OR s.brief ILIKE ? OR "
+                       "array_to_string(json_extract_string(s.generation, '$.sections[*].lines[*]'), ' ') ILIKE ?)")
+        wild = f"%{q}%"
+        params.extend([wild, wild, wild])
 
-        if cursor:
-            decoded = decode_cursor(cursor)
-            if decoded:
-                c_time, c_id = decoded
-                clauses.append("(updated_at < ? OR (updated_at = ? AND id < ?))")
-                params.extend([c_time, c_time, c_id])
+    if cursor:
+        decoded = decode_cursor(cursor)
+        if decoded:
+            c_time, c_id = decoded
+            clauses.append("(s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))")
+            params.extend([c_time, c_time, c_id])
 
-        where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        sql = f"""
-            SELECT id, COALESCE(revision, 1) AS revision, title, brief, genre, subgenre,
-                   tempo_bpm, musical_key, scale, vocal_style, style_prompt, lyrics,
-                   (abc_score IS NOT NULL AND trim(abc_score) != '') AS has_abc,
-                   status, updated_at,
-                   COALESCE(NULLIF(generation->>'$.take_group', ''), id) AS take_group,
-                   COALESCE(CAST(generation->>'$.take_number' AS INTEGER), 1) AS take_number
-            FROM crafted_songs
-            {where_sql}
-            ORDER BY updated_at DESC, id DESC
-            LIMIT ?
-        """
-        params.append(limit + 1)
-        rows = con.execute(sql, params).fetchall()
+    where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = f"""
+        SELECT {_SONG_COLUMNS}
+        FROM crafted_songs s
+        {where_sql}
+        ORDER BY s.updated_at DESC, s.id DESC
+        LIMIT ?
+    """
+    params.append(limit + 1)
+    records = store.db.read_dicts(sql, params)
 
-        songs: list[SongListItem] = []
-        next_cursor = None
-        has_more = len(rows) > limit
-        effective_rows = rows[:limit]
-        # take_count per group across the whole library (not just this page), so a song
-        # that genuinely has N takes always reports N even if some takes are off-page.
-        count_by_group: dict[str, int] = {}
-        for grp, cnt in con.execute(
-            "SELECT COALESCE(NULLIF(generation->>'$.take_group', ''), id) AS g, count(*) "
-            "FROM crafted_songs GROUP BY g"
-        ).fetchall():
-            count_by_group[grp] = int(cnt)
+    has_more = len(records) > limit
+    effective_records = records[:limit]
+    songs = [SongStore._decode(rec) for rec in effective_records]
 
-        hash_parts = []
-        for r in effective_rows:
-            (sid, rev, title, brief, g, sg, bpm, key, scale, vocal, prompt, lyrics,
-             has_abc, stat, updated_at, take_group, take_number) = r
-            dt_iso = to_utc_iso(updated_at)
-            hash_parts.append(f"{sid}:{rev}:{dt_iso}")
+    next_cursor = None
+    if has_more and songs:
+        last_song = songs[-1]
+        last_updated = last_song.updated_at or datetime.now(timezone.utc)
+        next_cursor = encode_cursor(last_updated, last_song.song_id)
 
-            inst = is_instrumental(vocal, prompt)
-            duration_hint = estimate_duration_sec(lyrics, bpm or 118)
-            has_abc_available = bool(has_abc)
+    result = SongListResponse(songs=songs, next_cursor=next_cursor)
+    etag = 'W/"' + hashlib.sha256(result.model_dump_json().encode("utf-8")).hexdigest()[:16] + '"'
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = "private, must-revalidate, max-age=5"
 
-            songs.append(SongListItem(
-                id=sid,
-                revision=rev,
-                take_id=f"{sid}:{rev}",
-                take_group=take_group or sid,
-                take_number=int(take_number or 1),
-                take_count=count_by_group.get(take_group or sid, 1),
-                title=title or "Untitled Song",
-                summary=brief or prompt or (lyrics[:100] if lyrics else ""),
-                genre=g or "Pop",
-                subgenre=sg or "",
-                language="English",
-                instrumental=inst,
-                duration_hint_sec=duration_hint,
-                bpm=int(round(bpm or 118)),
-                key=f"{key} {scale}".strip() if key else "C major",
-                scale=scale or "major",
-                time_signature="4/4",
-                has_abc=has_abc_available,
-                status=stat or "ready",
-                updated_at=dt_iso,
-            ))
-        if has_more:
-            last_row = effective_rows[-1]
-            last_id = last_row[0]
-            last_updated = last_row[14] or datetime.now(timezone.utc)
-            next_cursor = encode_cursor(last_updated, last_id)
+    if_none_match = request.headers.get("if-none-match")
+    if _matches_etag(if_none_match, etag):
+        return Response(status_code=http_status.HTTP_304_NOT_MODIFIED, headers=dict(response.headers))
 
-        # Compute ETag
-        etag = 'W/"' + hashlib.sha256(";".join(hash_parts).encode("utf-8")).hexdigest()[:16] + '"'
-        response.headers["ETag"] = etag
-        response.headers["Cache-Control"] = "private, must-revalidate, max-age=5"
-
-        if_none_match = request.headers.get("if-none-match")
-        if if_none_match and if_none_match == etag:
-            return Response(status_code=http_status.HTTP_304_NOT_MODIFIED)
-
-        return SongListResponse(songs=songs, next_cursor=next_cursor)
-    finally:
-        con.close()
+    return result
 
 
 @router.get(
     "/songs/{song_id}",
-    response_model=SongDetailResponse,
-    summary="Get Full Song Details & Pre-Formatted Model Inputs",
+    response_model=SongGeneration,
+    summary="Get Full Song Details",
 )
 def get_song(
     song_id: str,
@@ -649,119 +452,35 @@ def get_song(
     revision: int | None = Query(None, description="Specific revision to retrieve"),
     _token: str = Depends(require_auth),
 ) -> Any:
-    con = get_db_read()
-    try:
-        if revision is not None:
-            rev_row = con.execute(
-                "SELECT generation, created_at FROM song_revisions WHERE song_id = ? AND revision = ?",
-                (song_id, revision),
-            ).fetchone()
-            if not rev_row:
-                return error_json(
-                    status_code=http_status.HTTP_404_NOT_FOUND,
-                    code="revision_not_found",
-                    message=f"Revision {revision} of song '{song_id}' not found.",
-                )
-            gen = json.loads(rev_row[0]) if isinstance(rev_row[0], str) else rev_row[0]
-            created_at = rev_row[1]
-            rev = revision
-            title = gen.get("title") or "Untitled Song"
-            brief = gen.get("brief") or gen.get("prompt") or ""
-            genre = gen.get("genre") or "Pop"
-            subgenre = gen.get("subgenre") or ""
-            vocal = gen.get("vocal") or gen.get("vocal_style") or "melodic lead"
-            style_prompt = gen.get("style_prompt") or ""
-            lyrics = gen.get("lyrics") or ""
-            bpm = int(round(gen.get("bpm") or gen.get("tempo_bpm") or 118))
-            key = gen.get("key") or gen.get("musical_key") or "C"
-            scale = gen.get("scale") or "major"
-            stat = "ready"
-            created_iso = to_utc_iso(created_at)
-            updated_iso = created_iso
-            song_dict = {
-                "title": title, "brief": brief, "genre": genre, "subgenre": subgenre,
-                "vocal_style": vocal, "style_prompt": style_prompt, "lyrics": lyrics,
-                "tempo_bpm": bpm, "musical_key": key, "scale": scale,
-                "engine_prompt": (gen.get("engine_prompts") or {}).get("minimax"),
-                "abc_score": gen.get("abc_score"),
-            }
-        else:
-            row = con.execute("SELECT * FROM crafted_songs WHERE id = ?", (song_id,)).fetchone()
-            if not row:
-                return error_json(
-                    status_code=http_status.HTTP_404_NOT_FOUND,
-                    code="song_not_found",
-                    message=f"Song with ID '{song_id}' not found.",
-                )
+    store = SongStore()
+    if revision is not None:
+        song = store.load_revision(song_id, revision)
+        if not song:
+            return error_json(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                code="revision_not_found",
+                message=f"Revision {revision} of song '{song_id}' not found.",
+            )
+    else:
+        song = store.load(song_id)
+        if not song:
+            return error_json(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                code="song_not_found",
+                message=f"Song with ID '{song_id}' not found.",
+            )
 
-            cols = [c[0] for c in con.description]
-            song_dict = dict(zip(cols, row))
 
-            rev = song_dict.get("revision") or 1
-            title = song_dict.get("title") or "Untitled Song"
-            brief = song_dict.get("brief") or ""
-            genre = song_dict.get("genre") or "Pop"
-            subgenre = song_dict.get("subgenre") or ""
-            vocal = song_dict.get("vocal_style") or "melodic lead"
-            style_prompt = song_dict.get("style_prompt") or ""
-            lyrics = song_dict.get("lyrics") or ""
-            bpm = int(round(song_dict.get("tempo_bpm") or 118))
-            key = song_dict.get("musical_key") or "C"
-            scale = song_dict.get("scale") or "major"
-            stat = song_dict.get("status") or "ready"
-            created_at = song_dict.get("created_at")
-            updated_at = song_dict.get("updated_at")
+    body_json = song.model_dump_json()
+    etag = 'W/"' + hashlib.sha256(body_json.encode("utf-8")).hexdigest()[:16] + '"'
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = "private, must-revalidate, max-age=60"
 
-            created_iso = to_utc_iso(created_at)
-            updated_iso = to_utc_iso(updated_at)
+    if_none_match = request.headers.get("if-none-match")
+    if _matches_etag(if_none_match, etag):
+        return Response(status_code=http_status.HTTP_304_NOT_MODIFIED, headers=dict(response.headers))
 
-        etag = f'"{song_id}:{rev}"'
-        response.headers["ETag"] = etag
-        response.headers["Cache-Control"] = "private, must-revalidate, max-age=60"
-
-        if_none_match = request.headers.get("if-none-match")
-        if if_none_match and if_none_match == etag:
-            return Response(status_code=http_status.HTTP_304_NOT_MODIFIED)
-        inst = is_instrumental(vocal, style_prompt)
-        duration_hint = estimate_duration_sec(lyrics, bpm)
-
-        # Build model prompts and ABC score
-        mm_caption, mm_lyrics, yue2_style, yue2_lyrics, abc_score = build_model_prompts(song_dict)
-
-        # Generic caption
-        caption = style_prompt or mm_caption.split("\n\n")[0].replace("[Global Metadata]\n", "")
-
-        return SongDetailResponse(
-            id=song_id,
-            revision=rev,
-            title=title,
-            summary=brief,
-            status=stat,
-            creative=CreativeContent(
-                caption=caption,
-                lyrics=lyrics,
-                instrumental=inst,
-                language="English",
-                genre=genre,
-                subgenre=subgenre,
-                moods=[],
-                instruments=[],
-                bpm=bpm,
-                key=f"{key} {scale}".strip(),
-                scale=scale,
-                time_signature="4/4",
-                vocal_style=vocal,
-                duration_hint_sec=duration_hint,
-            ),
-            model_inputs=ModelInputs(
-                minimax=MinimaxModelInput(caption=mm_caption, lyrics=mm_lyrics),
-                yue2=Yue2ModelInput(style=yue2_style, lyrics=yue2_lyrics, abc_score=abc_score),
-            ),
-            created_at=created_iso,
-            updated_at=updated_iso,
-        )
-    finally:
-        con.close()
+    return song
 
 
 @router.post(

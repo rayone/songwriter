@@ -10,6 +10,9 @@ async function loadDatabaseStats() {
   } catch (e) {}
 }
 window.addEventListener('DOMContentLoaded', function boot() {
+  loadSongDefaults().catch(function(e) {
+    console.error('Bootstrap failure in loadSongDefaults:', e);
+  });
   updateStepperUI();
   loadModels();
   loadFormatterTemplates();

@@ -11,46 +11,11 @@ function requestedGenre() {
   return style.split(',')[0].split('(')[0].trim();
 }
 function currentParams() {
-  const bannedRaw = val('gw-banned');
-  const banned = bannedRaw
-    ? bannedRaw.split(',').map(function trim(s) { return s.trim(); }).filter(Boolean)
-    : null;
-  const bpmRaw = parseInt(val('gw-bpm'), 10);
-  const tmplRaw = parseInt(val('gw-selected-template-id'), 10);
-  const scheme = val('gw-scheme');
-  const vocal = val('gw-vocal');
-  let vocalRoles = null;
-  if (vocal === 'duet') {
-    vocalRoles = {
-      singer_a: val('gw-singer-a') || 'Singer A (Male Vocal)',
-      singer_b: val('gw-singer-b') || 'Singer B (Female Vocal)'
-    };
+  syncSongFromDOM(state.song);
+  if (state.song) {
+    state.song.answers = collectAnswers();
   }
-
-  return {
-    title: val('gw-title') || 'Untitled Song',
-    prompt: val('gw-prompt'),
-    style: val('gw-style-input') || null,
-    genre: requestedGenre() || null,
-    template_id: isNaN(tmplRaw) ? null : tmplRaw,
-    reference_song: state.referenceSong || null,
-    bpm: isNaN(bpmRaw) ? null : bpmRaw,
-    music_key: val('gw-key') || null,
-    scale: val('gw-scale') || null,
-    vocal: vocal || null,
-    vocal_roles: vocalRoles,
-    banned_words: banned,
-    rhyme_scheme: scheme === 'free' ? null : scheme,
-    section_plan: val('gw-plan') || null,
-    syllable_target: val('gw-syllables') || null,
-    engine_target: val('gw-engine') || 'standard',
-    answers: collectAnswers(),
-    questions: state.questions.map(function(q) {
-      return { id: q.id, question: q.question, why: q.why || '', options: q.options || [], category: q.category || 'creative' };
-    }),
-    song_id: state.editingSongId || null,
-    model: val('gw-model') || state.selectedModel || ''
-  };
+  return state.song;
 }
 // ------------------------------------------------ Step 3: Producer Questions
 // The questions, their defaults and the answers are written for one brief,
@@ -58,12 +23,12 @@ function currentParams() {
 // the questions are stale and must be regenerated, or the old reference's
 // details (its sections, hook, scheme) leak into the draft through the answers.
 function questionsContextKey() {
-  const ref = state.referenceSong || {};
+  const ref = (state.song && state.song.reference_song) || {};
   return [
     ref.id || ((ref.title || '') + '|' + (ref.artist || '')),
     state.referenceRevision,
-    val('gw-prompt') || '',
-    val('gw-storyline-text') || state.storyline || '',
+    val('gw-prompt') || (state.song && state.song.brief) || '',
+    val('gw-storyline-text') || (state.song && state.song.story) || '',
     requestedGenre(),
     val('gw-style-input'),
     val('gw-selected-template-id'),
@@ -71,12 +36,14 @@ function questionsContextKey() {
   ].join('::');
 }
 function questionsAreCurrent() {
-  return !!(state.questions && state.questions.length) && state.questionsKey === questionsContextKey();
+  return !!(state.song && state.song.questions && state.song.questions.length) && state.questionsKey === questionsContextKey();
 }
 // Drop questions and answers so Step 3 regenerates them for the new context.
 function invalidateQuestions() {
-  state.questions = [];
-  state.answers = {};
+  if (state.song) {
+    state.song.questions = [];
+    state.song.answers = {};
+  }
   state.questionsKey = null;
   state.unlockedSteps = state.unlockedSteps.filter(function(s) { return s !== 4; });
   renderQuestions();
@@ -87,30 +54,26 @@ async function loadInterviewQuestions() {
   const host = el('gw-questions');
   if (!host) return;
   host.innerHTML = '<div class="empty-state">Generating brief-specific craft questions...</div>';
-  const producerModel = (val('gw-model') || state.selectedModel || '').trim();
+  const producerModel = (val('gw-model') || (state.song && state.song.model) || '').trim();
   setStatus('gw-interview-status', 'Consulting ' + (producerModel || 'the model') + '...', 'yellow');
   try {
-    const data = await postJSON('/api/ai/interview', {
-      brief: val('gw-prompt') || 'An original song',
-      style: val('gw-style-input') || '',
-      genre: requestedGenre(),
-      template_id: parseInt(val('gw-selected-template-id'), 10) || null,
-      reference_song: state.referenceSong || null,
-      story: val('gw-storyline-text') || state.storyline || '',
-      model: val('gw-model') || state.selectedModel || '',
-      use_model: true
-    });
-    // A newer request (context changed again mid-flight) wins; drop this reply.
+    syncSongFromDOM(state.song);
+    const returnedSong = await postJSON('/api/ai/interview?use_model=true', state.song);
     if (key !== questionsContextKey()) return;
-    state.questions = data.questions || [];
+    if (returnedSong) {
+      Object.assign(state.song, returnedSong);
+    }
     state.questionsKey = key;
-    state.defaults = data.defaults || {};
-    state.answers = {};
-    for (const q of state.questions) {
-      state.answers[q.id] = String(q.default || '');
+    if (!state.song.answers || typeof state.song.answers !== 'object') {
+      state.song.answers = {};
+    }
+    for (const q of (state.song.questions || [])) {
+      if (state.song.answers[q.id] == null && q.default != null) {
+        state.song.answers[q.id] = String(q.default);
+      }
     }
     renderQuestions();
-    setStatus('gw-interview-status', `${state.questions.length} questions ready.`, 'green');
+    setStatus('gw-interview-status', `${(state.song.questions || []).length} questions ready.`, 'green');
     if (!state.unlockedSteps.includes(4)) state.unlockedSteps.push(4);
     updateStepperUI();
   } catch (err) {
@@ -121,13 +84,14 @@ async function loadInterviewQuestions() {
 function renderQuestions() {
   const host = el('gw-questions');
   if (!host) return;
-  if (!state.questions.length) {
+  const questions = (state.song && state.song.questions) || [];
+  if (!questions.length) {
     host.innerHTML = '<div class="empty-state">No questions yet.</div>';
     return;
   }
   // Older saved interviews classified genre as production; keep it on the left too.
-  const creative = state.questions.filter(function(q) { return q.id === 'genre' || q.category === 'creative' || !q.category; });
-  const production = state.questions.filter(function(q) { return q.id !== 'genre' && q.category === 'production'; });
+  const creative = questions.filter(function(q) { return q.id === 'genre' || q.category === 'creative' || !q.category; });
+  const production = questions.filter(function(q) { return q.id !== 'genre' && q.category === 'production'; });
   function column(title, items, startIdx) {
     if (!items.length) return '';
     return '<div class="qcol"><h3 class="qgroup-title">' + title + '</h3>' +
@@ -138,7 +102,7 @@ function renderQuestions() {
     column('Production', production, creative.length);
 }
 function renderQuestion(q, idx) {
-  const current = String(state.answers[q.id] == null ? q.default : state.answers[q.id]);
+  const current = String((state.song && state.song.answers && state.song.answers[q.id]) == null ? q.default : state.song.answers[q.id]);
   const name = 'q-' + q.id;
 
   let controlsHtml = '';
@@ -206,15 +170,26 @@ document.addEventListener('change', function(e) {
   }
 });
 function selectQuestionOption(qId, valStr) {
-  state.answers[qId] = valStr;
+  if (!state.song) state.song = {};
+  if (!state.song.answers) state.song.answers = {};
+  state.song.answers[qId] = valStr;
+  const isFollowRef = /^follow reference/i.test(valStr);
+  if (qId === 'syllable_target' && state.song) {
+    state.song.follow_reference_syllables = isFollowRef;
+  } else if (qId === 'section_lines' && state.song) {
+    state.song.follow_reference_lines = isFollowRef;
+  } else if (qId === 'rhyme_scheme' && state.song) {
+    state.song.follow_reference_rhyme = isFollowRef;
+  }
   // "Follow reference ..." answers keep the reference's own shape; the backend
   // resolves them, so don't parse fragments like "Follow" into the Step 2 fields.
-  if (/^follow reference/i.test(valStr)) return;
+  if (isFollowRef) return;
   if (qId === 'bpm') {
     const nums = valStr.match(/\d+/);
     if (nums) {
       setFieldValue('gw-bpm', nums[0]);
       setFieldValue('gw-bpm-input', nums[0]);
+      if (state.song) state.song.bpm = parseInt(nums[0], 10);
     }
   } else if (qId === 'musical_key') {
     const parts = valStr.split(' ');
@@ -225,30 +200,42 @@ function selectQuestionOption(qId, valStr) {
       setFieldValue('gw-scale', scaleMode);
       setFieldValue('gw-key-select', rootKey);
       setFieldValue('gw-scale-select', scaleMode);
+      if (state.song) {
+        state.song.key = rootKey;
+        state.song.scale = scaleMode;
+      }
     }
   } else if (qId === 'syllable_target') {
     setFieldValue('gw-syllables', valStr.split(' ')[0]);
+    if (state.song) {
+      const nums = valStr.match(/\d+/g);
+      if (nums && nums.length >= 2) {
+        state.song.syllable_min = Math.min(parseInt(nums[0], 10), parseInt(nums[1], 10));
+        state.song.syllable_max = Math.max(parseInt(nums[0], 10), parseInt(nums[1], 10));
+      }
+    }
   } else if (qId === 'rhyme_scheme') {
-    setFieldValue('gw-scheme', valStr.split(' ')[0]);
+    const sch = valStr.split(' ')[0];
+    setFieldValue('gw-scheme', sch);
+    if (state.song) state.song.rhyme_scheme = sch;
   } else if (qId === 'section_plan') {
     const planKey = valStr.split(' ')[0].toLowerCase();
     setFieldValue('gw-plan', planKey);
   } else if (qId === 'vocal') {
     const vKey = valStr.split(' ')[0].toLowerCase();
     setFieldValue('gw-vocal', vKey);
+    if (state.song) state.song.vocal = vKey;
     onVocalChanged();
   }
 }
 function collectAnswers() {
   const answers = {};
-  for (const q of state.questions) {
-    const v = String(state.answers[q.id] || '').trim();
+  const questions = (state.song && state.song.questions) || [];
+  const songAnswers = (state.song && state.song.answers) || {};
+  for (const q of questions) {
+    const v = String(songAnswers[q.id] || '').trim();
     if (v) {
-      answers[q.id] = {
-        question: q.question || q.id,
-        answer: v,
-        category: q.category || 'creative'
-      };
+      answers[q.id] = v;
     }
   }
   return answers;
