@@ -143,6 +143,11 @@ function renderQuestion(q, idx) {
         '<span>' + escapeHtml(v) + (q.option_labels && q.option_labels[v] ? ' <small>(' + escapeHtml(q.option_labels[v]) + ')</small>' : '') + '</span></label>';
     }).join('');
     controlsHtml = '<div class="qopts">' + options + '</div>';
+    if (q.id === 'genre') {
+      controlsHtml += '<input type="text" id="q-genre-custom" class="mt-8" maxlength="120"' +
+        ' placeholder="Or type your own genre" value="' + escapeHtml(current) + '"' +
+        ' oninput="onGenreTyped(this.value)">';
+    }
   }
 
   return '<fieldset class="qitem" id="qcard-' + escapeHtml(q.id) + '">' +
@@ -150,6 +155,14 @@ function renderQuestion(q, idx) {
     (q.why ? '<p class="qhint">' + escapeHtml(q.why) + '</p>' : '') +
     controlsHtml +
     '</fieldset>';
+}
+// Typing a genre overrides the radio choice; picking a radio refills the box.
+function onGenreTyped(value) {
+  const typed = String(value || '').trim();
+  if (!state.song) state.song = {};
+  if (!state.song.answers) state.song.answers = {};
+  state.song.answers.genre = typed;
+  document.querySelectorAll('#qcard-genre input[type=radio]').forEach(function(r) { r.checked = r.value === typed; });
 }
 function onBpmSliderInput(val) {
   const num = parseInt(val, 10);
@@ -176,6 +189,10 @@ function selectQuestionOption(qId, valStr) {
   if (!state.song) state.song = {};
   if (!state.song.answers) state.song.answers = {};
   state.song.answers[qId] = valStr;
+  if (qId === 'genre') {
+    const box = el('q-genre-custom');
+    if (box) box.value = valStr;
+  }
   const isFollowRef = /^follow reference/i.test(valStr);
   if (qId === 'syllable_target' && state.song) {
     state.song.follow_reference_syllables = isFollowRef;
