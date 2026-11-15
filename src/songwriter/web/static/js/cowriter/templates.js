@@ -198,7 +198,8 @@ async function showTemplateCard(templateId, preserveStyle = false) {
       `;
     }
     const textEl = el('gw-card-tmpl-text');
-    if (textEl) textEl.value = meta.audio_prompt || tmpl.minimax_caption || tmpl.yue2_style || meta.title;
+    // A reopened song keeps its saved (possibly edited) style instead of the template text.
+    if (textEl) textEl.value = (preserveStyle && val('gw-style-input')) || meta.audio_prompt || tmpl.minimax_caption || tmpl.yue2_style || meta.title;
     const proTipEl = el('gw-card-tmpl-protip');
     if (proTipEl) {
       proTipEl.innerText = meta.pro_tip ? '💡 Pro-Tip: ' + meta.pro_tip : '';
