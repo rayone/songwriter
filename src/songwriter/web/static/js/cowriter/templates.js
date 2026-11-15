@@ -198,7 +198,7 @@ async function showTemplateCard(templateId, preserveStyle = false) {
       `;
     }
     const textEl = el('gw-card-tmpl-text');
-    if (textEl) textEl.innerText = meta.audio_prompt || tmpl.minimax_caption || tmpl.yue2_style || meta.title;
+    if (textEl) textEl.value = meta.audio_prompt || tmpl.minimax_caption || tmpl.yue2_style || meta.title;
     const proTipEl = el('gw-card-tmpl-protip');
     if (proTipEl) {
       proTipEl.innerText = meta.pro_tip ? '💡 Pro-Tip: ' + meta.pro_tip : '';
@@ -309,7 +309,7 @@ function applyDefaults(defaults) {
     }
     const textEl = el('gw-card-tmpl-text');
     if (textEl && defaults.audio_prompt) {
-      textEl.innerText = defaults.audio_prompt;
+      textEl.value = defaults.audio_prompt;
     }
     const proTipEl = el('gw-card-tmpl-protip');
     if (proTipEl) {

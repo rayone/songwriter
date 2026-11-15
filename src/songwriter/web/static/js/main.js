@@ -23,6 +23,16 @@ window.addEventListener('DOMContentLoaded', function boot() {
   if (styleInput) {
     styleInput.addEventListener('input', debounce(refreshTemplateMatches, 600));
   }
+  const tmplText = el('gw-card-tmpl-text');
+  if (tmplText) {
+    // Edits to the template's audio prompt become the song's style direction.
+    tmplText.addEventListener('input', function() {
+      const style = el('gw-style-input');
+      if (style) style.value = this.value;
+      syncSongFromDOM(state.song);
+      if (typeof updateStepNavState === 'function') updateStepNavState();
+    });
+  }
   const genreInput = el('gw-genre-input');
   if (genreInput) {
     genreInput.addEventListener('input', function() {
