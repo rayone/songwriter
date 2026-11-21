@@ -37,6 +37,8 @@ function goToStep(stepNum) {
     if (!questionsAreCurrent()) {
       loadInterviewQuestions();
     }
+  } else if (stepNum === 4 && typeof updateSaveControls === 'function') {
+    updateSaveControls(state.takes[state.activeTakeId]);
   }
 }
 function advanceToStep(stepNum) {

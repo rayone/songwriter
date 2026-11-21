@@ -149,12 +149,12 @@ test('failed streams stop showing running and can create a new take', async () =
   await second;
 });
 
-test('discard invalidates all pending runs, even when IDs are reused', async () => {
+test('new song invalidates all pending runs, even when IDs are reused', async () => {
   const { c, requests, finish } = harness();
   const first = c.runGenerateTake(false);
   c.onNewTakeClicked();
   const second = c.onTakeModalParallel();
-  c.discardAndStartOver();
+  c.startNewSong();
   assert.equal(requests.every(r => r.options.signal.aborted), true);
   const fresh = c.runGenerateTake(false);
   finish(0, 'discarded one'); finish(1, 'discarded two');
@@ -162,6 +162,48 @@ test('discard invalidates all pending runs, even when IDs are reused', async () 
   assert.equal(c.state.takes[1].status, 'running');
   finish(2, 'fresh'); await fresh;
   assert.equal(c.state.takes[1].song.lyrics, 'fresh');
+});
+
+test('a take is saved once the server completes it; a title edit afterwards needs a re-save', async () => {
+  const { c, nodes, emit, requests } = harness();
+  const button = { classList: { toggle() {} }, innerText: '', disabled: false };
+  nodes.set('btn-save-take', button);
+  nodes.set('gw-title', { value: 'Rain' });
+  const run = c.runGenerateTake(false);
+  c.updateSaveControls(c.state.takes[1]);
+  assert.equal(button.disabled, true);
+  assert.match(button.innerText, /Saves automatically/);
+  const song = JSON.parse(requests[0].options.body);
+  emit(0, { type: 'complete', song: { ...song, lyrics: 'la la', status: 'finalized', title: 'Rain', song_id: 'song_abc', revision: 1, take_number: 1 } });
+  requests[0].controller.close();
+  await run;
+  assert.equal(c.takeIsSaved(c.state.takes[1]), true);
+  assert.equal(button.disabled, false);
+  assert.match(button.innerText, /Saved · View in Library/);
+  assert.match(nodes.get('gw-status').innerText, /Saved to your library as "Rain" \(Take 1\)/);
+  nodes.get('gw-title').value = 'Rain Again';
+  c.updateSaveControls(c.state.takes[1]);
+  assert.match(button.innerText, /Save Song to Library/);
+});
+
+test('new song asks first only when a take is running or unsaved, and keeps saved songs out of the warning', () => {
+  const { c } = harness();
+  const asked = [];
+  c.confirm = msg => { asked.push(msg); return false; };
+  c.state.takes[1] = { takeId: 1, status: 'completed', song: { song_id: 's1', revision: 2, lyrics: 'saved' } };
+  c.startNewSong();
+  assert.equal(asked.length, 0);
+  assert.equal(Object.keys(c.state.takes).length, 0);
+  c.state.takes[1] = { takeId: 1, status: 'completed', song: { lyrics: 'never saved' } };
+  c.startNewSong();
+  assert.equal(asked.length, 1);
+  assert.match(asked[0], /not in your library/);
+  assert.equal(Object.keys(c.state.takes).length, 1);
+  c.confirm = () => true;
+  c.startNewSong();
+  assert.equal(Object.keys(c.state.takes).length, 0);
+  assert.equal(c.state.nextTakeId, 1);
+  assert.equal(c.state.takeGroup, null);
 });
 
 test('human review responses remain attached to their originating take after switching', async () => {

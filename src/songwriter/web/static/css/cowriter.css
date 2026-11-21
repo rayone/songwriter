@@ -71,6 +71,14 @@
   border-color: var(--cyan);
   background: rgba(125, 207, 255, 0.08);
 }
+.btn-secondary.is-saved {
+  color: var(--emerald);
+  border-color: rgba(158, 206, 106, 0.4);
+}
+.btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .packages-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

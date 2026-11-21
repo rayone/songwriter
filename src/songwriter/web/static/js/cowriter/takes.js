@@ -346,6 +346,7 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
     } else {
       takeStatus(take, 'Song complete! Verified against all scansion rules.', 'green');
     }
+    if (takeIsSaved(take)) takeStatus(take, take.statusText + savedNote(take.song), take.statusColor);
   } catch (err) {
     if (!isCurrentTakeRun(take) || (err && err.name === 'AbortError')) return;
     take.status = 'failed';
@@ -593,15 +594,62 @@ async function finalizeHumanReview(hr = state.humanReview) {
     hr.take.humanReview = null;
     if (state.humanReview === hr) state.humanReview = null;
     renderTake(data, hr.take.takeId);
-    takeStatus(hr.take, 'Song complete from your accepted turns.', 'green');
+    takeStatus(hr.take, 'Song complete from your accepted turns.' + savedNote(hr.take.song), 'green');
   } catch (e) {
     if (isCurrentTakeRun(hr.take)) takeStatus(hr.take, 'Finalize error: ' + e.message, 'red');
   } finally {
     hr.busy = false;
   }
 }
-function discardAndStartOver() {
-  if (!confirm('Discard current song draft and return to Step 1?')) return;
+// ------------------------------------------------ New song / save state
+// The server saves a take the moment it finishes (stream complete / finalize_turns), so a
+// finished take already carries its song_id and revision.
+function takeIsSaved(take) {
+  return !!(take && take.song && take.song.song_id && take.song.revision > 0);
+}
+function savedNote(song) {
+  if (!song || !song.song_id) return '';
+  return ' Saved to your library as "' + (song.title || 'Untitled Song') + '" (Take ' + (song.take_number || 1) + ').';
+}
+// A saved take needs another save only when the title was edited since.
+function takeNeedsSave(take) {
+  if (!takeIsSaved(take)) return true;
+  const title = val('gw-title');
+  return !!title && title !== (take.song.title || '');
+}
+function updateSaveControls(take) {
+  const btn = el('btn-save-take');
+  if (!btn) return;
+  const running = !!take && take.status === 'running';
+  const saved = !running && !takeNeedsSave(take);
+  btn.disabled = running;
+  btn.classList.toggle('is-saved', saved);
+  if (running) btn.innerText = 'Saves automatically when done';
+  else if (saved) btn.innerText = '✓ Saved · View in Library';
+  else btn.innerText = '✓ Save Song to Library';
+}
+function onSaveTakeClicked() {
+  const take = state.takes[state.activeTakeId];
+  if (take && !takeNeedsSave(take)) { switchTab('crafted'); return; }
+  return saveCurrentTake();
+}
+function startNewSong() {
+  const takes = Object.values(state.takes);
+  const running = takes.filter(function(t) { return t.status === 'running'; });
+  const unsaved = takes.filter(function(t) { return t.status !== 'running' && !takeIsSaved(t) && t.song && t.song.lyrics; });
+  const warnings = [];
+  if (running.length) warnings.push(running.length + ' take' + (running.length > 1 ? 's are' : ' is') + ' still generating and will be stopped without saving.');
+  if (unsaved.length) warnings.push(unsaved.length + ' take' + (unsaved.length > 1 ? 's have' : ' has') + ' lyrics that are not in your library and will be lost.');
+  if (warnings.length && !confirm('Start a new song?\n\n' + warnings.join('\n') + '\n\nSongs already saved stay in Saved Songs.')) return;
+  resetCowriterWorkspace();
+  goToStep(1);
+  if (typeof window.scrollTo === 'function') window.scrollTo(0, 0);
+  setStatus('gw-story-status', 'New song started. Your previous song is in Saved Songs.', 'green');
+  const brief = el('gw-prompt');
+  if (brief && typeof brief.focus === 'function') brief.focus();
+}
+// Back to a blank Steps 1-4 without touching anything already saved.
+function resetCowriterWorkspace() {
   for (const take of Object.values(state.takes)) {
     if (take.abort) take.abort.abort();
   }
@@ -611,15 +659,37 @@ function discardAndStartOver() {
   state.nextTakeId = 1;
   state.activeTakeId = null;
   state.takeGroup = null;
+  state.bypassedReference = false;
+  state.questionsKey = null;
+  state.recommendations = [];
+  state.searchResults = [];
+  state.lastRecKey = null;
+  state.selectedBlueprint = null;
+  state.unlockedSteps = [1];
   state.song = typeof deepClone === 'function' ? deepClone(defaultSongTemplate) : JSON.parse(JSON.stringify(defaultSongTemplate));
   syncDOMFromSong(state.song);
   const switcher = el('ws-take-switcher');
   if (switcher) switcher.innerHTML = '<button type="button" class="pill active" id="btn-take-1" onclick="selectTake(1)">Take 1</button>';
   const chatWindow = el('gw-chat-turns-window');
-  if (chatWindow) chatWindow.innerHTML = '<div class="empty-state" id="gw-chat-empty-state">Draft discarded. Click "Re-Draft Current Take" or start fresh from Step 1.</div>';
+  if (chatWindow) chatWindow.innerHTML = '<div class="empty-state" id="gw-chat-empty-state">Turn-by-turn drafting appears here once you generate lyrics in Step 3.</div>';
   const lyricsContent = el('lyrics-sheet-content');
   if (lyricsContent) lyricsContent.innerHTML = 'Your verified lyrics will assemble here in real time as each line passes scansion checks.';
-  goToStep(1);
+  for (const id of ['lyrics-meta-pills', 'craft-pills', 'craft-trail-container']) {
+    const node = el(id);
+    if (node) node.innerHTML = '';
+  }
+  for (const id of ['pkg-songbench-box', 'pkg-yue2-box', 'pkg-minimax-box']) {
+    const node = el(id);
+    if (node) node.value = '';
+  }
+  const indicator = el('gw-chat-turn-indicator');
+  if (indicator) indicator.innerText = 'Turn 0';
+  const copyBtn = el('btn-copy-chat-transcript');
+  if (copyBtn) copyBtn.classList.add('d-none');
+  const redraft = el('btn-start-interactive-cowrite');
+  if (redraft) redraft.innerText = '↺ Re-Draft';
+  setStatus('gw-status', 'Ready to craft.');
+  updateSaveControls(null);
 }
 // ------------------------------------------------ Step 4: Generation & Takes
 function isCurrentTakeRun(take) {
@@ -670,6 +740,7 @@ function updateTakeControls(take) {
   const btn = el('btn-start-interactive-cowrite');
   if (btn) btn.innerText = take.status === 'running' ? '↺ Reset Current Take' : '↺ Re-Draft Current Take';
   setStatus('gw-status', take.statusText || 'Ready to craft.', take.statusColor);
+  updateSaveControls(take);
 }
 function beginTake(isNewTake, resetTakeId) {
   const takeId = resetTakeId || (!isNewTake && state.activeTakeId) || state.nextTakeId++;
@@ -928,6 +999,7 @@ async function saveCurrentTake() {
     } else {
       setStatus('gw-status', 'Saved "' + savedSong.title + '" (Take ' + takeNum + ') to library!', 'green');
     }
+    updateSaveControls(currentTake);
   } catch (e) {
     setStatus('gw-status', 'Save error: ' + e.message, 'red');
   }

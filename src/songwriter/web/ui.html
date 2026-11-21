@@ -642,7 +642,7 @@
           <!-- Chat Turns Container -->
           <div id="gw-chat-turns-window" class="chat-turns-window">
             <div class="empty-state" id="gw-chat-empty-state">
-              Click <b>"Run Interactive Co-Writer"</b> to begin drafting line-by-line with live prompt inspection, 5x retry validation loops, and RhymeDB injection!
+              Turn-by-turn drafting appears here: each prompt sent to the model, its response, the engine's validation verdict and any RhymeDB candidates.
             </div>
           </div>
         </div>
@@ -666,18 +666,16 @@
       <div class="note-indigo fs-sm c-muted flex items-center gap-10">
         <svg width="20" height="20" fill="none" stroke="var(--indigo)" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
         <div>
-          <b>Create New Versions:</b> You can click back to <b>Step 1</b> (Idea &amp; Story), <b>Step 2</b> (Specs &amp; Reference Track), or <b>Step 3</b> (Questions) at any time to adjust parameters. When you return here, click <b>"+ New Take"</b> to generate an alternate take and compare!
+          <b>Saved automatically:</b> every finished take is added to <b>Saved Songs</b>. To try another version of this song, click <b>"+ New Take"</b> (adjust Steps 1-3 first if you like). To write a different song, click <b>"+ New Song"</b>.
         </div>
       </div>
 
       <div class="step-footer flex-wrap gap-10">
-        <div class="flex gap-8">
-          <button type="button" class="btn-secondary" onclick="goToStep(3)">⬅ Back to Step 3</button>
-          <button type="button" class="btn-secondary btn-danger-outline" onclick="discardAndStartOver()">Discard &amp; Start Over</button>
-        </div>
-        <div class="flex gap-8">
-          <button type="button" class="btn-secondary" onclick="saveCurrentTake()">✓ Save Song to Library</button>
-          <button type="button" class="btn-primary" onclick="loadTakeIntoStudio()">Open in Lyrics Editor ➔</button>
+        <button type="button" class="btn-secondary" onclick="goToStep(3)">⬅ Back to Step 3</button>
+        <div class="flex gap-8 flex-wrap">
+          <button type="button" class="btn-secondary" id="btn-save-take" onclick="onSaveTakeClicked()">✓ Save Song to Library</button>
+          <button type="button" class="btn-secondary" onclick="loadTakeIntoStudio()">Open in Lyrics Editor ➔</button>
+          <button type="button" class="btn-primary" id="btn-new-song" onclick="startNewSong()" title="Start a different song from Step 1. Songs already saved stay in Saved Songs.">+ New Song</button>
         </div>
       </div>
 
