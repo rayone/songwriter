@@ -260,8 +260,10 @@ def test_every_attempt_nonrhyming_finalizes_incomplete_not_verified(
                for e in events if e.get("type") == "validation")
     inc = [e for e in events if e.get("type") == "section_incomplete"]
     assert inc and inc[0]["reason"] == "did not pass validation"
+    assert inc[0]["issues"] and any("rhyme" in i.lower() for i in inc[0]["issues"])
     done = next(e for e in events if e.get("type") == "complete")
     assert done["song"]["status"] == "incomplete"
+    assert done["song"]["incomplete_sections"][0]["issues"] == inc[0]["issues"]
     assert saved and saved[-1].status == "incomplete"
 
 

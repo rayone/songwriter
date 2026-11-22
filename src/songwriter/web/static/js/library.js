@@ -150,6 +150,16 @@ function renderInspector(g, status) {
     <span class="badge badge-info ${status === 'finalized' ? 'duet' : ''}">${escapeHtml(status || g.status || 'draft')}</span>
     ${g.abc_score ? '<span class="badge badge-success">ABC Score Ready</span>' : ''}
   `;
+  const incomplete = el('insp-incomplete');
+  if (incomplete) {
+    const parts = (g.incomplete_sections || []).map(function(s) {
+      const what = s.reason === 'short' ? `${s.have}/${s.planned} lines` : 'did not pass validation';
+      const why = (s.issues && s.issues.length ? s.issues : incompleteReasons(g, s.name)).map(function(i) { return '<div>• ' + escapeHtml(i) + '</div>'; }).join('');
+      return '<div class="mb-4"><b>' + escapeHtml(s.name) + '</b> (' + what + ')' + why + '</div>';
+    });
+    incomplete.innerHTML = parts.length ? '<div class="fw-700 mb-4">Needs another pass</div>' + parts.join('') : '';
+    incomplete.style.display = parts.length ? 'block' : 'none';
+  }
   el('insp-lyrics-sheet').innerHTML = formatLyricsWithBadges(g.lyrics || '');
   el('insp-abc-text').value = g.abc_score || 'No ABC score: this song has no imported MIDI.';
   el('insp-prompt-songbench').value = getEnginePromptDisplay(g, 'songbench');

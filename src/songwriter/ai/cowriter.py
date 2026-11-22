@@ -2439,6 +2439,7 @@ Respond with JSON only, no prose, in exactly this shape:
             # each block passed. Declared here (not per block) so an earlier failed
             # block is not forgotten when a later block passes.
             section_passed = True
+            section_failures: list[str] = []  # why the kept takes failed, for the incomplete report
 
             blocks = gen.line_blocks(sec_name)
             for block in blocks:
@@ -2679,6 +2680,7 @@ Respond with JSON only, no prose, in exactly this shape:
                 p_retry = ""
                 # (rank, attempt, lines) of the strongest usable attempt so far.
                 best_attempt: tuple[tuple[bool, bool, float, int], int, list[str]] | None = None
+                best_issues: list[str] = []  # critical issues of that attempt
                 for attempt in range(1, gen.max_retries + 1):
                     current_p = p if attempt == 1 else p_retry
                     yield {
@@ -2913,6 +2915,7 @@ Respond with JSON only, no prose, in exactly this shape:
                             -len(critical_violations))
                     if usable and (best_attempt is None or rank >= best_attempt[0]):
                         best_attempt = (rank, attempt, usable)
+                        best_issues = list(critical_violations) or list(issues)
                     kept_attempt: int | None = None
                     if passed:
                         accepted_block, kept_attempt = usable, attempt
@@ -2921,6 +2924,8 @@ Respond with JSON only, no prose, in exactly this shape:
                         # lost, but mark it NOT passed -- the best take's own rank[0].
                         accepted_block, kept_attempt = best_attempt[2], best_attempt[1]
                         accepted_passed = accepted_passed and bool(best_attempt[0][0])
+                        if not best_attempt[0][0]:
+                            section_failures.extend(i for i in best_issues if i not in section_failures)
                     first_st = self.workbench.ca.line_stat(produced[0]) if produced else self.workbench.ca.line_stat("")
                     val_data = {
                         "passed": passed,
@@ -3018,10 +3023,14 @@ Respond with JSON only, no prose, in exactly this shape:
             if not gen.repeat_of(sec_name) and (len(sec_lines) < planned or not section_passed):
                 short = len(sec_lines) < planned
                 reason = "short" if short else "did not pass validation"
-                incomplete_sections.append({"name": sec_name, "have": len(sec_lines),
-                                            "planned": planned, "reason": reason})
+                entry: dict[str, Any] = {"name": sec_name, "have": len(sec_lines),
+                                         "planned": planned, "reason": reason}
+                if section_failures:
+                    entry["issues"] = section_failures[:4]
+                incomplete_sections.append(entry)
                 yield {"type": "section_incomplete", "section": sec_name,
-                       "have": len(sec_lines), "planned": planned, "reason": reason}
+                       "have": len(sec_lines), "planned": planned, "reason": reason,
+                       "issues": entry.get("issues", [])}
             sections_out.append({
                 "name": sec_name,
                 "kind": sec_kind,

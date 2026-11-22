@@ -396,6 +396,30 @@ function formatLyricsWithBadges(lyrics) {
   }
   return out.join('\n');
 }
+// Why a section was kept although it failed validation. Songs saved before
+// incomplete_sections carried `issues` only have this in their per-attempt turns: each
+// block is the turns sharing a line_number, the accepted turn names the kept attempt,
+// and that attempt's violations are the reason. Blocks whose kept attempt passed add none.
+function incompleteReasons(song, sectionName) {
+  const blocks = {};
+  for (const t of (song && song.turns) || []) {
+    if (t.section !== sectionName) continue;
+    (blocks[t.line_number] = blocks[t.line_number] || []).push(t);
+  }
+  const reasons = [];
+  for (const turns of Object.values(blocks)) {
+    const accepted = turns.find(function(t) { return t.accepted_line != null; });
+    const kept = accepted && accepted.validation && accepted.validation.kept_attempt;
+    const keptTurn = turns.find(function(t) { return t.attempt === kept; });
+    const v = keptTurn && keptTurn.validation;
+    if (!v || v.passed) continue;
+    const found = v.critical_violations && v.critical_violations.length ? v.critical_violations : (v.issues || []);
+    for (const reason of found) {
+      if (!reasons.includes(reason)) reasons.push(reason);
+    }
+  }
+  return reasons.slice(0, 4);
+}
 function copyBox(boxId, btn) {
   const box = el(boxId);
   if (!box) return;

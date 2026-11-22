@@ -170,6 +170,43 @@ and `model_inputs` wrappers are removed. Use the canonical root fields:
 tonic (for example `Bb`); `scale` remains separate (`major`). The generated
 OpenAPI schema documents the complete input/output fields.
 
+### Generating a song over the API
+
+`POST /api/ai/draft_stream` takes a full `SongGeneration` document and streams
+server-sent events; the song is saved to the library once, when the last section
+finishes (`type: "complete"`). A dropped connection loses the song in progress.
+
+1. `GET /api/ai/song_defaults` for a valid document. Unknown fields are rejected
+   with HTTP 422 (there is no `storyline` field; use `story`).
+2. Set `title`, `brief`, `style`, `genre`, `bpm`, `key`, `scale`, `vocal` and
+   `model` (ids from `GET /api/ai/models`). Leave `song_id` and `take_group` empty
+   to create a new song; send an existing `song_id` to save a new revision of it.
+3. `POST` the document to `/api/ai/draft_stream` and read lines starting
+   `data: `. Each is JSON with a `type`: `prompt`, `response`, `validation`,
+   `critique`, `line_accepted`, `section_incomplete`, `error`, then `complete`.
+4. The `complete` event's `song` carries `song_id`, `revision` and `status`:
+   `finalized`, or `incomplete` with `incomplete_sections` naming each section
+   that failed and, in `issues`, why. The same reasons are stored per attempt in
+   `turns[].validation`.
+
+One song takes about 5 to 7 minutes (around 30 model calls). Three at a time ran
+with no slowdown.
+
+```python
+import json, urllib.request
+base = "http://10.0.5.211:8000"
+song = json.load(urllib.request.urlopen(base + "/api/ai/song_defaults"))
+song.update(title="Ice Crown", brief="...", style="EDM", genre="EDM",
+            bpm=124, key="A", scale="minor", model="kr/auto")
+req = urllib.request.Request(base + "/api/ai/draft_stream", json.dumps(song).encode(),
+                             {"Content-Type": "application/json"})
+for raw in urllib.request.urlopen(req):
+    if raw.startswith(b"data: "):
+        event = json.loads(raw[6:])
+        if event["type"] == "complete":
+            print(event["song"]["song_id"], event["song"]["status"])
+```
+
 ### Adding or updating reference songs
 
 In **Cowriter → Step 2: Reference & Specs**, expand **Add / update references**,

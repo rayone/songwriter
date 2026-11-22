@@ -378,3 +378,25 @@ test('returning to lyrics retains the working model choice without rewriting the
   assert.equal(c.state.song.model, 'new-model');
   assert.equal(take.song.model, 'glm-4.6');
 });
+
+test('an incomplete section saved before issues existed still explains itself from its kept attempt', () => {
+  const { c } = harness();
+  const turn = (attempt, line_number, passed, crit, accepted, kept, section = 'Intro') => ({
+    section, line_number, attempt, accepted_line: accepted ? 'kept lines' : null,
+    validation: { passed, critical_violations: crit, issues: crit, kept_attempt: kept }
+  });
+  const song = { turns: [
+    // Ice Crown's Intro: four failed attempts; the strongest was attempt 3, not the last.
+    turn(1, 1, false, ["Critic: 'the glacier's land' is filler."], false, null),
+    turn(2, 1, false, ['Line 2 does not make sense.'], false, null),
+    turn(3, 1, false, ['Critic: the ice cracks rather than comes down.'], false, null),
+    turn(4, 1, false, ["Line 2 should rhyme with Line 1 ('glacier')."], true, 3),
+    // A second block of the same section that passed adds nothing.
+    turn(1, 3, true, [], true, 1),
+    // Another section is ignored.
+    turn(1, 5, false, ['Verse problem.'], true, 1, 'Verse 1')
+  ] };
+  assert.deepEqual(Array.from(c.incompleteReasons(song, 'Intro')), ['Critic: the ice cracks rather than comes down.']);
+  assert.deepEqual(Array.from(c.incompleteReasons({ turns: [] }, 'Intro')), []);
+  assert.deepEqual(Array.from(c.incompleteReasons({}, 'Intro')), []);
+});

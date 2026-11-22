@@ -340,8 +340,10 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
         const detail = s.reason === 'did not pass validation'
           ? 'did not pass validation'
           : `${s.have}/${s.planned} lines`;
-        return `${s.name} (${detail})`;
-      }).join(', ');
+        const reasons = s.issues && s.issues.length ? s.issues : incompleteReasons(completeData, s.name);
+        const why = reasons.length ? ': ' + reasons[0] : '';
+        return `${s.name} (${detail}${why})`;
+      }).join('; ');
       takeStatus(take, 'Song incomplete — ' + (names || 'see panel') + '. Re-draft to fix.', 'yellow');
     } else {
       takeStatus(take, 'Song complete! Verified against all scansion rules.', 'green');
