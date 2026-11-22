@@ -193,8 +193,8 @@ One song takes about 5 to 7 minutes (around 30 model calls). Three at a time ran
 with no slowdown.
 
 ```python
-import json, urllib.request
-base = "http://10.0.5.211:8000"
+import json, os, urllib.request
+base = os.environ.get("SONGWRITER_URL", "http://localhost:8000")
 song = json.load(urllib.request.urlopen(base + "/api/ai/song_defaults"))
 song.update(title="Ice Crown", brief="...", style="EDM", genre="EDM",
             bpm=124, key="A", scale="minor", model="kr/auto")
