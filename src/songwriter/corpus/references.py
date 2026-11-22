@@ -153,8 +153,12 @@ class ReferenceStore:
     def search(self, query: str = "", search_by: str = "all", genre: str | None = None,
                year_min: int | None = None, year_max: int | None = None,
                limit: int = 30) -> list[dict[str, Any]]:
+        q = query.strip()
+        is_quoted = (q.startswith('"') and q.endswith('"') and len(q) >= 2) or \
+                    (q.startswith("'") and q.endswith("'") and len(q) >= 2)
+        raw_q = q[1:-1].strip() if is_quoted else q
         columns = [search_by] if search_by in ("title", "artist", "lyrics") else ["title", "artist", "lyrics"]
-        terms = query.strip().split() if search_by == "all" else [query.strip()]
+        terms = [raw_q] if (is_quoted or not raw_q) else raw_q.split()
         clauses: list[str] = []
         params: list[Any] = []
         for term in filter(None, terms):
@@ -175,7 +179,7 @@ class ReferenceStore:
             ORDER BY CASE WHEN title_norm = ? THEN 0 WHEN contains(artist_norm, ?) THEN 1 ELSE 2 END,
                      length(lyrics) DESC, year DESC, title_norm ASC
             LIMIT ?
-            """, [*params, normalize_identity(query), normalize_identity(query), limit])
+            """, [*params, normalize_identity(raw_q), normalize_identity(raw_q), limit])
 
     def get_recommendation_candidates(self, target_bpm: float, bpm_window: float = 8.0,
                                       genre_terms: list[str] | None = None,

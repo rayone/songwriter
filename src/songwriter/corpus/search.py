@@ -180,27 +180,45 @@ class SongSearcher:
                year_max: int | None = None, limit: int = 30,
                has_midi: bool = False) -> list[SongSummary]:
         """Search songs with relevance ranking, multi-word matching, and transliteration handling."""
+        if search_by not in ("all", "title", "artist", "lyrics"):
+            search_by = "all"
         q = query.strip()
         clauses: list[str] = []
 
+        is_quoted = (q.startswith('"') and q.endswith('"') and len(q) >= 2) or \
+                    (q.startswith("'") and q.endswith("'") and len(q) >= 2)
+        raw_q = q[1:-1].strip() if is_quoted else q
+        escaped_q = raw_q.replace("'", "''")
+        words = [w.strip() for w in raw_q.split() if len(w.strip()) > 1]
+
         # Transliteration expansion (e.g. Tiesto -> Tisto / Tiësto in Genius dataset)
-        terms = [q] if q else []
-        q_low = q.lower()
+        terms = [raw_q] if raw_q else []
+        q_low = raw_q.lower()
         if "tiesto" in q_low or "tiësto" in q_low or "tisto" in q_low:
             terms.extend(["Tisto", "Tiesto", "Tiësto"])
         if "beyonce" in q_low or "beyoncé" in q_low:
             terms.extend(["Beyonce", "Beyoncé"])
         terms = list(dict.fromkeys(terms))
 
-        escaped_q = q.replace("'", "''")
-        words = [w.strip() for w in q.split() if len(w.strip()) > 1]
-
-        if q:
-            if len(words) > 1 and search_by == "all":
-                # Multi-word query: each word must match across (title OR artist OR lyrics)
-                for w in words:
-                    w_esc = w.replace("'", "''")
-                    clauses.append(f"(title ILIKE '%{w_esc}%' OR artist ILIKE '%{w_esc}%' OR lyrics ILIKE '%{w_esc}%')")
+        if raw_q:
+            if not is_quoted and len(words) > 1:
+                # Multi-word unquoted query: each word must match the requested scope
+                if search_by == "all":
+                    for w in words:
+                        w_esc = w.replace("'", "''")
+                        clauses.append(f"(title ILIKE '%{w_esc}%' OR artist ILIKE '%{w_esc}%' OR lyrics ILIKE '%{w_esc}%')")
+                elif search_by == "lyrics":
+                    for w in words:
+                        w_esc = w.replace("'", "''")
+                        clauses.append(f"lyrics ILIKE '%{w_esc}%'")
+                elif search_by == "title":
+                    for w in words:
+                        w_esc = w.replace("'", "''")
+                        clauses.append(f"title ILIKE '%{w_esc}%'")
+                elif search_by == "artist":
+                    for w in words:
+                        w_esc = w.replace("'", "''")
+                        clauses.append(f"artist ILIKE '%{w_esc}%'")
             else:
                 or_clauses = []
                 for t in terms:
@@ -235,12 +253,29 @@ class SongSearcher:
         artist_match = " OR ".join(f"artist ILIKE '%{t.replace('\'', '\'\'')}%'" for t in terms) or "FALSE"
         title_match = " OR ".join(f"title ILIKE '%{t.replace('\'', '\'\'')}%'" for t in terms) or "FALSE"
         cross_match = " AND ".join(f"(title ILIKE '%{w.replace('\'', '\'\'')}%' OR artist ILIKE '%{w.replace('\'', '\'\'')}%')" for w in words) if len(words) > 1 else "1=0"
+        lyrics_exact = f"lyrics ILIKE '%{escaped_q}%'" if escaped_q else "FALSE"
 
         if search_by == "artist":
             relevance_sql = f"""
                 CASE
-                    WHEN ({artist_match}) THEN 0
+                    WHEN lower(artist) = lower('{escaped_q}') THEN 0
+                    WHEN ({artist_match}) THEN 1
+                    ELSE 2
+                END
+            """
+        elif search_by == "lyrics":
+            relevance_sql = f"""
+                CASE
+                    WHEN ({lyrics_exact}) THEN 0
                     ELSE 1
+                END
+            """
+        elif search_by == "title":
+            relevance_sql = f"""
+                CASE
+                    WHEN lower(title) = lower('{escaped_q}') THEN 0
+                    WHEN ({title_match}) THEN 1
+                    ELSE 2
                 END
             """
         else:
