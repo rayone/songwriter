@@ -807,8 +807,11 @@
         <!-- ABC Score View -->
         <div id="insp-view-abc" class="hidden flex-col gap-8">
           <div class="flex justify-between items-center">
-            <span class="fs-xs c-muted">Conditional musical score for YuE2 inference:</span>
-            <button type="button" class="btn-secondary btn-sm" onclick="copyBox('insp-abc-text', this)">Copy ABC</button>
+            <span class="fs-xs c-muted" id="insp-abc-desc">Conditional musical score for YuE2 inference:</span>
+            <button type="button" class="btn-secondary btn-sm" id="btn-copy-abc" onclick="copyBox('insp-abc-text', this)">Copy ABC</button>
+          </div>
+          <div id="insp-abc-notice" class="hidden panel-sm fs-xs c-muted lh-14">
+            No ABC score is available for this song because it was generated without an imported MIDI score. To generate conditional scores for YuE2, select a reference song with an imported MIDI in Step 2 (check "Has MIDI score only").
           </div>
           <textarea id="insp-abc-text" class="pkg-box min-h-260 mono fs-sm" readonly></textarea>
         </div>
@@ -860,22 +863,22 @@
     <div class="grid grid-auto-160 gap-10">
       <div class="stat-tile">
         <div class="stat-tile-label">1. Cadence &amp; Pulse</div>
-        <div class="stat-tile-value c-cyan" id="m-cadence-var">0.00</div>
+        <div class="stat-tile-value c-cyan" id="m-cadence-var">--</div>
         <div class="stat-tile-sub" id="m-cadence-label">Pulse Variance: -</div>
       </div>
       <div class="stat-tile">
         <div class="stat-tile-label">2. Vocabulary Diversity</div>
-        <div class="stat-tile-value c-emerald" id="m-ttr-val">0.0%</div>
+        <div class="stat-tile-value c-emerald" id="m-ttr-val">--%</div>
         <div class="stat-tile-sub" id="m-ttr-label">TTR Ratio: -</div>
       </div>
       <div class="stat-tile">
         <div class="stat-tile-label">3. Rhyme Architecture</div>
-        <div class="stat-tile-value c-indigo" id="m-density">0%</div>
+        <div class="stat-tile-value c-indigo" id="m-density">--%</div>
         <div class="stat-tile-sub" id="m-scheme">Scheme: -</div>
       </div>
       <div class="stat-tile">
         <div class="stat-tile-label">4. Syllable Benchmark</div>
-        <div class="stat-tile-value c-bright" id="m-avg-syl">0.0</div>
+        <div class="stat-tile-value c-bright" id="m-avg-syl">--</div>
         <div class="stat-tile-sub" id="m-lines-label">0 lines</div>
       </div>
     </div>

@@ -143,12 +143,13 @@ function onCraftedSearchInput(val) {
 function renderInspector(g, status) {
   el('insp-title').innerText = g.title || 'Untitled Song';
   el('insp-meta').innerText = `${g.artist || 'AI Songwriter'} • ${g.genre || 'Pop'}${g.subgenre ? ' (' + g.subgenre + ')' : ''} • ${g.bpm || 92} BPM in ${g.key || 'C'} ${g.scale || 'major'}`;
+  const hasAbc = !!(g.abc_score && g.abc_score.trim());
   el('insp-badges').innerHTML = `
     <span class="badge badge-info">${escapeHtml(g.genre || 'Pop')}</span>
     <span class="badge badge-info">${escapeHtml(g.bpm || 92)} BPM</span>
     <span class="badge badge-info">${escapeHtml(g.key || 'C')} ${escapeHtml(g.scale || 'major')}</span>
     <span class="badge badge-info ${status === 'finalized' ? 'duet' : ''}">${escapeHtml(status || g.status || 'draft')}</span>
-    ${g.abc_score ? '<span class="badge badge-success">ABC Score Ready</span>' : ''}
+    <span class="badge ${hasAbc ? 'badge-success' : 'badge-secondary'}">${hasAbc ? 'ABC Score Ready' : 'No ABC Score'}</span>
   `;
   const incomplete = el('insp-incomplete');
   if (incomplete) {
@@ -160,8 +161,18 @@ function renderInspector(g, status) {
     incomplete.innerHTML = parts.length ? '<div class="fw-700 mb-4">Needs another pass</div>' + parts.join('') : '';
     incomplete.style.display = parts.length ? 'block' : 'none';
   }
+  const btnAbc = el('btn-insp-abc');
+  if (btnAbc) {
+    btnAbc.innerHTML = hasAbc ? 'YuE2 ABC Score <span class="c-emerald">✓</span>' : 'YuE2 ABC Score <span class="fs-xs c-dim">(No MIDI)</span>';
+  }
+  const abcNotice = el('insp-abc-notice');
+  if (abcNotice) abcNotice.style.display = hasAbc ? 'none' : 'block';
+  const copyAbcBtn = el('btn-copy-abc');
+  if (copyAbcBtn) copyAbcBtn.disabled = !hasAbc;
+
   el('insp-lyrics-sheet').innerHTML = formatLyricsWithBadges(g.lyrics || '');
-  el('insp-abc-text').value = g.abc_score || 'No ABC score: this song has no imported MIDI.';
+  el('insp-abc-text').value = hasAbc ? g.abc_score : '';
+  el('insp-abc-text').placeholder = hasAbc ? '' : 'No ABC score available: this song was generated without an imported MIDI reference track.';
   el('insp-prompt-songbench').value = getEnginePromptDisplay(g, 'songbench');
   el('insp-prompt-minimax').value = getEnginePromptDisplay(g, 'minimax');
   el('insp-prompt-yue2').value = getEnginePromptDisplay(g, 'yue2');

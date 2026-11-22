@@ -2944,7 +2944,7 @@ Respond with JSON only, no prose, in exactly this shape:
                         ],
                         "issues": issues,
                         "critical_violations": critical_violations,
-                        "advisories": advisories if not passed else [],
+                        "advisories": advisories,
                         "validation_mode": gen.validation_mode,
                         "critique": critique_data,
                         "kept_attempt": kept_attempt,

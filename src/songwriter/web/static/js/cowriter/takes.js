@@ -155,7 +155,11 @@ function copyChatTranscript(btn) {
   copyText(fullText, btn);
 }
 function analysisPanelInner(passed, scan, issues, critical_violations, advisories) {
-  const verdict = passed ? '✓ Passed engine checks' : '✗ Failed engine checks';
+  const crits = critical_violations || (!passed ? issues : []) || [];
+  const advs = advisories || [];
+  const verdict = passed
+    ? (advs.length ? '✓ Passed (guideline advisory tolerated)' : '✓ Passed engine checks')
+    : '✗ Failed engine checks';
   const rows = (scan || []).map(function(s) {
     if (s.missing) {
       return `<div class="fs-xs c-rose fw-700">L${s.line}: model returned no line</div>`;
@@ -167,9 +171,6 @@ function analysisPanelInner(passed, scan, issues, critical_violations, advisorie
       : 'free';
     return `<div class="fs-xs">L${s.line}: ${role}<b>${s.syllables}</b> syl (aim ${s.target}, ${escapeHtml(s.range || '')}) · ${sound}end '<b>${escapeHtml(s.end_word || '')}</b>' · ${rhyme}</div>`;
   }).join('');
-
-  const crits = critical_violations || (!passed ? issues : []) || [];
-  const advs = advisories || [];
 
   let issuesHtml = '';
   if (crits.length) {
@@ -346,7 +347,17 @@ async function runInteractiveDrafting(isNewTake = false, resetTakeId = null) {
       }).join('; ');
       takeStatus(take, 'Song incomplete — ' + (names || 'see panel') + '. Re-draft to fix.', 'yellow');
     } else {
-      takeStatus(take, 'Song complete! Verified against all scansion rules.', 'green');
+      const allAdvisories = (completeData.turns || [])
+        .filter(function(t) { return t.accepted_line != null; })
+        .flatMap(function(t) { return (t.validation && t.validation.advisories) || []; });
+      const hasAdvisories = allAdvisories.length > 0;
+      takeStatus(
+        take,
+        hasAdvisories
+          ? 'Song complete! Verified against core scansion rules (with guideline advisories).'
+          : 'Song complete! Verified against all scansion rules.',
+        'green'
+      );
     }
     if (takeIsSaved(take)) takeStatus(take, take.statusText + savedNote(take.song), take.statusColor);
   } catch (err) {

@@ -53,6 +53,18 @@ async function runStudioAnalysis(forceRawText = null) {
   }
 
   setStatus('analysis-status', 'Evaluating real-time...', 'yellow');
+  if (forceRawText) {
+    // A newly loaded song: clear the previous song's metrics. Live edits keep the current
+    // numbers on screen until the new ones arrive, so typing does not flicker.
+    if (el('m-cadence-var')) el('m-cadence-var').innerText = '--';
+    if (el('m-ttr-val')) el('m-ttr-val').innerText = '--%';
+    if (el('m-density')) el('m-density').innerText = '--%';
+    if (el('m-avg-syl')) el('m-avg-syl').innerText = '--';
+  }
+  const tbody = el('unified-lyrics-tbody');
+  if (tbody && (!tbody.children.length || tbody.querySelector('.td-empty'))) {
+    tbody.innerHTML = '<tr><td colspan="7" class="td-empty c-muted">Evaluating lyrics, meter, and phonetics in real-time...</td></tr>';
+  }
   try {
     const curKey = val('gw-key') || 'C';
     const curScale = val('gw-scale') || 'major';
@@ -165,6 +177,10 @@ async function runStudioAnalysis(forceRawText = null) {
     setStatus('analysis-status', 'Real-Time Synchronized', 'green');
   } catch (e) {
     setStatus('analysis-status', 'Analysis failed: ' + e.message, 'red');
+    const pending = el('unified-lyrics-tbody');
+    if (pending && pending.querySelector('.td-empty')) {
+      pending.innerHTML = '<tr><td colspan="7" class="td-empty c-rose">Analysis failed: ' + escapeHtml(e.message) + '</td></tr>';
+    }
   }
 }
 function renderUnifiedTableRows(lines, force = false) {

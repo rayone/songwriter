@@ -238,6 +238,25 @@ def test_syllable_miss_beyond_tolerance_fails_smaller_miss_is_advisory(
     assert [e["line"] for e in events if e.get("type") == "line_accepted"] == ["Take my heart", "Break me apart"]
 
 
+def test_a_passing_turn_keeps_its_advisories(
+    cowriter: SongwriterCowriter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One syllable past the guide is tolerated, not failed. The turn passes and still
+    # reports why, so the UI can say "passed with an advisory" instead of hiding it.
+    if cowriter.workbench.db is None:
+        pytest.skip("corpus database not available")
+    from songwriter import settings
+    monkeypatch.setattr(settings, "get", lambda k: 2 if k == "syllable_tolerance" else settings._raw(k) or settings._SPEC[k][1])
+    monkeypatch.setattr(cowriter, "_chat",
+                        lambda messages, **kw: '{"passed": true, "summary": "ok", "lines": []}'
+                        if _is_critic(messages)
+                        else "Line 1: Take my heart\nLine 2: Pull my broken world apart")
+    events = list(cowriter.stream_song_interactive(_make_love_song(2)))
+    first = next(e["validation"] for e in events if e.get("type") == "validation")
+    assert first["passed"] is True
+    assert first["advisories"]
+
+
 def test_every_attempt_nonrhyming_finalizes_incomplete_not_verified(
     cowriter: SongwriterCowriter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
