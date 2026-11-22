@@ -159,6 +159,13 @@ def test_invalid_batch_saves_nothing_and_signed_http_ids_resolve(client_catalog,
     assert client.get("/api/songs/-999").status_code == 404
 
 
+def test_search_api_rejects_an_unknown_search_field(client_catalog):
+    client, store, _ = client_catalog
+    store.import_songs([reference()])
+    assert client.get("/api/songs/search", params={"q": "city", "by": "foo"}).status_code == 422
+    assert client.get("/api/songs/search", params={"q": "city", "by": "title"}).status_code == 200
+
+
 def test_recommendations_use_supplied_tempo_without_corpus_or_invented_midi(catalog, tmp_path):
     store, searcher = catalog
     result = store.import_songs([

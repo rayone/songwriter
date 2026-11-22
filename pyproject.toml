@@ -42,5 +42,5 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["dev/tests"]
+testpaths = ["tests"]
 pythonpath = ["src"]

@@ -556,7 +556,7 @@ def import_references(req: ReferenceImportRequest) -> dict[str, Any]:
 @app.get("/api/songs/search", summary="Search Bundled and Imported Reference Songs")
 def search_songs(
     q: str = Query("", description="Query string"),
-    by: str = Query("all", enum=["all", "title", "artist", "lyrics"], description="Search field"),
+    by: Literal["all", "title", "artist", "lyrics"] = Query("all", description="Search field"),
     genre: str | None = Query(None, description="Genre/tag filter"),
     year_min: int | None = Query(None, description="Minimum release year"),
     year_max: int | None = Query(None, description="Maximum release year"),
