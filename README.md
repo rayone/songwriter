@@ -170,6 +170,31 @@ and `model_inputs` wrappers are removed. Use the canonical root fields:
 tonic (for example `Bb`); `scale` remains separate (`major`). The generated
 OpenAPI schema documents the complete input/output fields.
 
+### Server-side generation queue
+
+Open **Generation Queue** to submit multiple songs, one `Title | story or brief`
+per line. The queue uses the current Cowriter model and production settings and
+generates one song at a time on the server. Closing the browser does not stop it.
+Songs appear in **Saved Songs** as each generation finishes.
+
+The queue survives a server restart. An interrupted song is regenerated unless
+its save already completed; progress within an unfinished song is not retained.
+On a model quota or rate-limit error the batch pauses and shows the provider's
+message. Resume it after the quota resets, or select another model in Cowriter
+and use **Resume using Cowriter model**. Incomplete songs can be regenerated as
+new revisions of the same saved song; the retry replaces the current version with
+the new revision, while the previous revision remains in history. A retry is
+refused if the saved song changed since the queue last wrote it.
+
+The queue is stored in `generation_queue.sqlite3` in `SONGWRITER_DATA_DIR`;
+include it alongside the workbench database in backups. The queue is designed
+for the bundled single-process service. API clients can use
+`POST /api/generation-queue` with `{"songs": [SongGeneration, ...]}` and
+`GET /api/generation-queue` to inspect jobs. Resume with
+`POST /api/generation-queue/{job_id}/resume`, optionally passing
+`{"model": "model-id"}` to switch pending songs; retry with
+`POST /api/generation-queue/{job_id}/items/{item_id}/retry`.
+
 ### Generating a song over the API
 
 `POST /api/ai/draft_stream` takes a full `SongGeneration` document and streams

@@ -20,6 +20,7 @@
   <nav>
     <button class="active" data-tab="ghostwriter" onclick="switchTab('ghostwriter')">Cowriter</button>
     <button data-tab="crafted" onclick="switchTab('crafted')">Saved Songs</button>
+    <button data-tab="queue" onclick="switchTab('queue')">Generation Queue</button>
     <button data-tab="studio" onclick="switchTab('studio')">Song Analytics</button>
     <button data-tab="rhymes" onclick="switchTab('rhymes')">Rhyme Finder</button>
     <button data-tab="songs" onclick="switchTab('songs')">Corpus Explorer</button>
@@ -29,6 +30,22 @@
 </header>
 
 <main>
+
+<div id="tab-queue" class="tab-content">
+  <div class="panel">
+    <h2>Generation Queue</h2>
+    <p>Queue multiple songs and close this page whenever you like. The server generates one song at a time and saves each to Saved Songs.</p>
+    <p>Each line is one song: <b>Title | story or brief</b>. The model, style and other production settings come from the current Cowriter fields.</p>
+    <label for="queue-songs">Songs</label>
+    <textarea id="queue-songs" rows="7" placeholder="First Snow | A cub explores the palace&#10;Star Sailor | The grown bear crosses an unknown sea"></textarea>
+    <div class="mt-12">
+      <button type="button" class="btn-primary" id="queue-submit" onclick="submitGenerationQueue()">Queue songs</button>
+      <button type="button" class="btn-secondary" onclick="loadGenerationQueue()">Refresh</button>
+    </div>
+    <p id="queue-message" role="status"></p>
+    <div id="queue-jobs" aria-live="polite"></div>
+  </div>
+</div>
 
 <!-- ------------------------------------------------ COWRITER (SEQUENTIAL 4-STEP WIZARD) -->
 <div id="tab-ghostwriter" class="tab-content active">
@@ -1268,6 +1285,7 @@
 <script defer src="/static/js/cowriter/templates.js"></script>
 <script defer src="/static/js/cowriter/interview.js"></script>
 <script defer src="/static/js/cowriter/takes.js"></script>
+<script defer src="/static/js/generation-queue.js"></script>
 <script defer src="/static/js/library.js"></script>
 <script defer src="/static/js/studio.js"></script>
 <script defer src="/static/js/formatter.js"></script>

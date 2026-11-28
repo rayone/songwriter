@@ -347,6 +347,7 @@ function switchTab(tabId) {
   }
   if (tabId === 'rhymes') loadRhymeDbStats();
   if (tabId === 'crafted') loadCraftedSongsList();
+  if (tabId === 'queue') loadGenerationQueue();
   if (tabId === 'settings' && typeof loadSettings === 'function') loadSettings();
 }
 function setFieldValue(id, value) {

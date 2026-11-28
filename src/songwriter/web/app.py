@@ -41,12 +41,17 @@ from songwriter.music.engine_prompt import format_lyrics_for_engine
 from songwriter.web.musicstudio_v1 import router as musicstudio_v1_router, init_db
 from songwriter.config import AUTH_ENABLED, AUTH_PASSWORD, AUTH_USER, CORPUS_DB, CORS_ORIGINS, DATA_DIR, SONGS_PARQUET, WORKBENCH_DB
 from songwriter.web.auth import BasicAuthMiddleware
+from songwriter.web.generation_queue import GenerationQueue
 DB_PATH = CORPUS_DB
 RHYME_DB_PATH = CORPUS_DB
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    generation_queue.start()
+    try:
+        yield
+    finally:
+        generation_queue.stop()
 
 
 app = FastAPI(
@@ -75,6 +80,7 @@ app.include_router(musicstudio_v1_router)
 wb = Workbench(DB_PATH)
 artist_import_manager = ArtistImportManager()
 cowriter = SongwriterCowriter()
+generation_queue = GenerationQueue(DATA_DIR / "generation_queue.sqlite3", cowriter)
 
 # The rebuilt rhyme dictionary. Optional so the rest of the API still serves if
 # it has not been built yet; /api/rhymes reports that rather than failing opaquely.
@@ -128,6 +134,45 @@ class DraftTurnRequest(BaseModel):
     accepted: list[dict[str, Any]] | None = Field(default=None, description="Accepted turns")
     reject_reason: str = Field(default="", description="Feedback for retrying the current turn")
     rejections: list[dict[str, Any]] | None = Field(default=None, description="Rejected drafts and reasons")
+
+class QueueRequest(BaseModel):
+    songs: list[SongGeneration] = Field(min_length=1, max_length=200)
+
+class QueueResumeRequest(BaseModel):
+    model: str | None = Field(default=None, max_length=200)
+
+
+@app.get("/api/generation-queue")
+def list_generation_queue() -> dict[str, Any]:
+    return {"jobs": generation_queue.list()}
+
+
+@app.post("/api/generation-queue")
+def create_generation_queue(req: QueueRequest) -> dict[str, Any]:
+    try:
+        return generation_queue.create(req.songs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/generation-queue/{job_id}/resume")
+def resume_generation_queue(job_id: str, req: QueueResumeRequest | None = None) -> dict[str, Any]:
+    try:
+        return generation_queue.resume(job_id, req.model.strip() if req and req.model else None)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/generation-queue/{job_id}/items/{item_id}/retry")
+def retry_generation_queue_item(job_id: str, item_id: str) -> dict[str, Any]:
+    try:
+        return generation_queue.retry(job_id, item_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 # ---------------------------------------------------------------- JSON APIs (for LLMs & Agents)
 
